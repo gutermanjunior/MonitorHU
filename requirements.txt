@@ -1,0 +1,5 @@
+selenium==4.9.1
+webdriver-manager
+requests
+python-dotenv
+urllib3<2
