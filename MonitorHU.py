@@ -1,15 +1,18 @@
 import time
 import os
-import sys
 import csv
+import sys
+import random
+import argparse
 import requests
 import smtplib
 import platform
+import logging
 from email.message import EmailMessage
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
-# Selenium & WebDriver
+# Selenium
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import Select
@@ -19,259 +22,249 @@ from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
 from selenium.common.exceptions import NoSuchElementException, TimeoutException
 
-# --- 1. CARREGA CONFIGURAÇÕES DO ARQUIVO .ENV ---
-load_dotenv()
+# --- CONFIGURAÇÃO DE LOGGING DO SISTEMA ---
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    datefmt='%H:%M:%S'
+)
+logger = logging.getLogger("MonitorHU")
 
-HU_USER = os.getenv("HU_USER")
-HU_DATA = os.getenv("HU_DATA")
-EMAIL_CONTA = os.getenv("EMAIL_CONTA")
-EMAIL_SENHA = os.getenv("EMAIL_SENHA")
-EMAIL_DESTINO = os.getenv("EMAIL_DESTINO")
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-
-# --- 2. CONFIGURAÇÕES DO ROBÔ ---
-URL_LOGIN = "https://sistemashu.hu.usp.br/reshu/paciente"
-ARQUIVO_LOG = "historico_especialidades.csv"
-INTERVALO = 120  # Tempo entre verificações (em segundos)
-
-# LISTA NEGRA (Especialidades para ignorar alertas, mas continua logando no CSV)
-ESPECIALIDADES_IGNORAR = [
-    "PEDIATRIA",
-    "CLÍNICA MÉDICA - RETORNO",
-]
-
-# --- 3. FUNÇÕES AUXILIARES ---
-
-def tocar_alarme_universal(mensagem):
-    """Toca som compatível com Windows e Mac"""
-    sistema = platform.system()
-    try:
-        if sistema == "Darwin":  # macOS
-            os.system(f'say -v Luciana "{mensagem}"')
-            os.system('afplay /System/Library/Sounds/Glass.aiff')
-        elif sistema == "Windows": # Windows
-            import winsound
-            winsound.Beep(1000, 1000)
-        else:
-            print("\a")
-    except:
-        pass
-
-def preencher_data_na_marra(driver, elemento_id, data_valor):
-    """Injeta a data via JS para não brigar com a máscara do input"""
-    try:
-        driver.find_element(By.ID, elemento_id).clear()
-        script = f"document.getElementById('{elemento_id}').value = '{data_valor}';"
-        driver.execute_script(script)
-    except Exception as e:
-        print(f"Erro JS Data: {e}")
-
-def registrar_log(tipo_evento, especialidade):
-    """Salva no CSV"""
-    arquivo_existe = os.path.isfile(ARQUIVO_LOG)
-    agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    with open(ARQUIVO_LOG, mode='a', newline='', encoding='utf-8') as file:
-        writer = csv.writer(file)
-        if not arquivo_existe:
-            writer.writerow(["Data_Hora", "Evento", "Especialidade"])
-        writer.writerow([agora, tipo_evento, especialidade])
-
-def enviar_telegram_com_foto(mensagem, arquivo_imagem=None):
-    """Envia mensagem para o Telegram (com ou sem foto)"""
-    url_msg = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    url_foto = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
-    try:
-        if arquivo_imagem:
-            with open(arquivo_imagem, 'rb') as foto:
-                requests.post(url_foto, data={'chat_id': TELEGRAM_CHAT_ID, 'caption': mensagem}, files={'photo': foto})
-        else:
-            requests.post(url_msg, data={'chat_id': TELEGRAM_CHAT_ID, 'text': mensagem})
-    except:
-        pass
-
-def enviar_email(assunto, corpo):
-    """Envia e-mail via Gmail"""
-    msg = EmailMessage()
-    msg.set_content(corpo)
-    msg['Subject'] = assunto
-    msg['From'] = EMAIL_CONTA
-    msg['To'] = EMAIL_DESTINO
-    try:
-        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
-            smtp.login(EMAIL_CONTA, EMAIL_SENHA)
-            smtp.send_message(msg)
-    except:
-        pass
-
-def configurar_driver():
-    """Configura o Chrome para parecer humano"""
-    options = webdriver.ChromeOptions()
-    # User-Agent de um PC comum para evitar bloqueio
-    user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    options.add_argument(f'user-agent={user_agent}')
-    options.add_argument("--disable-blink-features=AutomationControlled")
-    options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    options.add_experimental_option('useAutomationExtension', False)
-    return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
-
-def login_inicial(driver, wait):
-    """Executa o fluxo de login e espera o usuário resolver o CAPTCHA"""
-    print("Acessando página de login...")
-    driver.get(URL_LOGIN)
-    
-    try:
-        # Espera até 20s pelo campo de matrícula
-        wait.until(EC.presence_of_element_located((By.ID, "PacienteMatricula"))).send_keys(HU_USER)
+class MonitorHU:
+    def __init__(self, intervalo_base=120):
+        load_dotenv()
         
-        # Preenche Data via JavaScript
-        preencher_data_na_marra(driver, "PacienteDataNascimento", HU_DATA)
+        # Configurações
+        self.intervalo_base = intervalo_base
+        self.url = "https://sistemashu.hu.usp.br/reshu/paciente"
+        self.csv_file = "historico_especialidades.csv"
         
-        print("\n>>> DADOS PREENCHIDOS. RESOLVA O CAPTCHA E ENTRE. <<<")
-        tocar_alarme_universal("Por favor, resolva o Captcha.")
+        # Credenciais
+        self.user = os.getenv("HU_USER")
+        self.data_nasc = os.getenv("HU_DATA")
         
-        # O programa TRAVA aqui até o elemento 'Especialidade' aparecer na próxima tela
-        print("Aguardando carregamento da lista de especialidades...")
-        wait.until(EC.presence_of_element_located((By.ID, "Especialidade")))
+        # Notificações
+        self.email_conta = os.getenv("EMAIL_CONTA")
+        self.email_senha = os.getenv("EMAIL_SENHA")
+        self.email_destino = os.getenv("EMAIL_DESTINO")
+        self.tg_token = os.getenv("TELEGRAM_TOKEN")
+        self.tg_chat_id = os.getenv("TELEGRAM_CHAT_ID")
         
-        print("Login detectado com sucesso!")
-        return True
-        
-    except TimeoutException:
-        print("Tempo esgotado no login. Tentando recarregar...")
-        return False
+        # Estado
+        self.driver = None
+        self.wait = None
+        self.especialidades_anteriores = set()
+        self.blacklist = ["PEDIATRIA", "ODONTOLOGIA"] # O que ignorar
+        self.vagas_notificadas_sessao = set() # Evita spam da mesma vaga
+        self.total_vagas_sessao = 0
+        self.inicio_sessao = datetime.now()
 
-# --- 4. BLOCO PRINCIPAL (EXECUÇÃO) ---
+    def _configurar_driver(self):
+        options = webdriver.ChromeOptions()
+        user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        options.add_argument(f'user-agent={user_agent}')
+        options.add_argument("--disable-blink-features=AutomationControlled")
+        options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        options.add_experimental_option('useAutomationExtension', False)
+        
+        self.driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+        self.wait = WebDriverWait(self.driver, 20)
 
-if __name__ == "__main__":
-    inicio_sessao = datetime.now()
-    total_vagas_sessao = 0
-    
-    print("\n" + "="*40)
-    print(f"MONITOR HU - VERSÃO FINAL 9.0")
-    print(f"Início: {inicio_sessao.strftime('%d/%m %H:%M')}")
-    print("Para sair e gerar relatório, pressione CTRL+C")
-    print("="*40)
+    def _tocar_alarme(self, mensagem):
+        sistema = platform.system()
+        try:
+            if sistema == "Darwin":
+                os.system(f'say -v Luciana "{mensagem}"')
+                os.system('afplay /System/Library/Sounds/Glass.aiff')
+            elif sistema == "Windows":
+                import winsound
+                winsound.Beep(1000, 1000)
+            else:
+                print("\a")
+        except:
+            pass
 
-    try:
-        # Loop "Imortal" (Recupera se o navegador fechar)
-        while True:
-            driver = None
+    def _enviar_telegram(self, texto, imagem=None):
+        try:
+            url_msg = f"https://api.telegram.org/bot{self.tg_token}/sendMessage"
+            url_foto = f"https://api.telegram.org/bot{self.tg_token}/sendPhoto"
+            
+            if imagem:
+                with open(imagem, 'rb') as f:
+                    requests.post(url_foto, data={'chat_id': self.tg_chat_id, 'caption': texto}, files={'photo': f})
+            else:
+                requests.post(url_msg, data={'chat_id': self.tg_chat_id, 'text': texto})
+        except Exception as e:
+            logger.error(f"Erro Telegram: {e}")
+
+    def _enviar_email(self, assunto, corpo):
+        if not self.email_conta: return
+        msg = EmailMessage()
+        msg.set_content(corpo)
+        msg['Subject'] = assunto
+        msg['From'] = self.email_conta
+        msg['To'] = self.email_destino
+        try:
+            with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
+                smtp.login(self.email_conta, self.email_senha)
+                smtp.send_message(msg)
+        except Exception:
+            pass
+
+    def _registrar_csv(self, evento, especialidade):
+        existe = os.path.isfile(self.csv_file)
+        agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        try:
+            with open(self.csv_file, mode='a', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                if not existe:
+                    writer.writerow(["Data_Hora", "Evento", "Especialidade"])
+                writer.writerow([agora, evento, especialidade])
+        except Exception as e:
+            logger.error(f"Erro ao salvar CSV: {e}")
+
+    def _preencher_data_js(self, elemento_id, valor):
+        self.driver.find_element(By.ID, elemento_id).clear()
+        self.driver.execute_script(f"document.getElementById('{elemento_id}').value = '{valor}';")
+
+    def login(self):
+        logger.info("Tentando login...")
+        self.driver.get(self.url)
+        
+        try:
+            # Espera campo matrícula
+            self.wait.until(EC.presence_of_element_located((By.ID, "PacienteMatricula"))).send_keys(self.user)
+            self._preencher_data_js("PacienteDataNascimento", self.data_nasc)
+            
+            self._tocar_alarme("Por favor, resolva o Captcha.")
+            print("\n>>> AGUARDANDO RESOLUÇÃO DE CAPTCHA PELO USUÁRIO <<<")
+            
+            # Espera o dropdown aparecer (Sinal de sucesso)
+            self.wait.until(EC.presence_of_element_located((By.ID, "Especialidade")))
+            logger.info("Login realizado com sucesso!")
+            return True
+            
+        except TimeoutException:
+            logger.warning("Tempo esgotado no login.")
+            return False
+
+    def processar_vagas(self, opcoes_atuais):
+        # Filtra lixo
+        limpeza = {"Selecione a Especialidade...", "", "Selecione..."}
+        vagas_limpas = {op for op in opcoes_atuais if op not in limpeza}
+        
+        # Primeira rodada: Apenas loga o estado inicial
+        if not self.especialidades_anteriores:
+            self.especialidades_anteriores = vagas_limpas
+            logger.info(f"Monitorando {len(vagas_limpas)} especialidades iniciais.")
+            for esp in vagas_limpas:
+                self._registrar_csv("INICIO_EXECUCAO", esp)
+            return
+
+        # Comparação
+        novas = vagas_limpas - self.especialidades_anteriores
+        removidas = self.especialidades_anteriores - vagas_limpas
+        
+        # Filtra interesses (Blacklist)
+        novas_relevantes = {v for v in novas if v not in self.blacklist}
+
+        # Notificações
+        if novas_relevantes:
+            # Verifica se já notificamos essas vagas nesta sessão (Anti-Spam)
+            novas_frescas = novas_relevantes - self.vagas_notificadas_sessao
+            
+            if novas_frescas:
+                texto = ", ".join(novas_frescas)
+                msg = f"🚨 VAGA: {texto}"
+                print(f"\n[URGENTE] {msg}")
+                
+                # Screenshot
+                print_name = "vaga_temp.png"
+                self.driver.save_screenshot(print_name)
+                
+                self._enviar_telegram(msg, print_name)
+                self._enviar_email("Monitor HU: Vaga!", f"Disponível: {texto}")
+                self._tocar_alarme(f"Vaga para {texto}")
+                
+                self.total_vagas_sessao += len(novas_frescas)
+                self.vagas_notificadas_sessao.update(novas_frescas)
+                
+                try: os.remove(print_name)
+                except: pass
+        
+        # Atualiza Logs e Estado
+        for esp in novas: self._registrar_csv("ADICIONADA", esp)
+        for esp in removidas: 
+            self._registrar_csv("REMOVIDA", esp)
+            # Se a vaga saiu, removemos do 'cache de notificação' para avisar se ela voltar
+            if esp in self.vagas_notificadas_sessao:
+                self.vagas_notificadas_sessao.remove(esp)
+
+        if removidas:
+            print(f"\n[-] Saiu: {', '.join(removidas)}")
+
+        self.especialidades_anteriores = vagas_limpas
+        
+        # Feedback visual (número de vagas)
+        print(len(vagas_limpas), end="", flush=True)
+
+    def rodar(self):
+        print(f"\n=== MONITOR HU v10 (OOP) ===")
+        print(f"Início: {self.inicio_sessao.strftime('%H:%M')}")
+        self._enviar_telegram("🚀 Monitor Iniciado")
+
+        ultimo_heartbeat = datetime.now()
+
+        while True: # Loop de "Imortalidade" (Restart Browser)
             try:
-                driver = configurar_driver()
-                wait = WebDriverWait(driver, 20)
-                
-                # Tenta logar (Se falhar, reinicia o loop)
-                if not login_inicial(driver, wait):
-                    driver.quit()
-                    continue 
+                self._configurar_driver()
+                if not self.login():
+                    self.driver.quit()
+                    continue
 
-                enviar_telegram_com_foto("🚀 Monitor HU Conectado.")
-                
-                especialidades_anteriores = set()
-                primeira_rodada = True
-                ultimo_heartbeat = datetime.now()
+                while True: # Loop de Monitoramento
+                    # Heartbeat
+                    if (datetime.now() - ultimo_heartbeat) > timedelta(hours=1):
+                        self._enviar_telegram(f"💓 Vivo. Vagas: {len(self.especialidades_anteriores)}")
+                        ultimo_heartbeat = datetime.now()
 
-                # Loop de Monitoramento (Enquanto estiver logado)
-                while True:
-                    # Heartbeat (Sinal de vida a cada 1 hora)
-                    agora = datetime.now()
-                    if (agora - ultimo_heartbeat) > timedelta(hours=1):
-                        tempo_rodando = str(agora - inicio_sessao).split('.')[0]
-                        enviar_telegram_com_foto(f"💓 Vivo. Rodando há {tempo_rodando}")
-                        ultimo_heartbeat = agora
-
-                    # Atualiza a página
-                    driver.refresh()
+                    self.driver.refresh()
                     
-                    # Espera a lista carregar (Dinâmico)
-                    elemento_select = wait.until(EC.presence_of_element_located((By.ID, "Especialidade")))
+                    # Espera lista
+                    elem = self.wait.until(EC.presence_of_element_located((By.ID, "Especialidade")))
+                    select = Select(elem)
+                    opcoes = {opt.text.strip() for opt in select.options}
                     
-                    select_obj = Select(elemento_select)
-                    todas_opcoes = {opt.text.strip() for opt in select_obj.options}
+                    self.processar_vagas(opcoes)
                     
-                    # Remove opções inválidas
-                    limpeza = {"Selecione a Especialidade...", "", "Selecione..."}
-                    opcoes_limpas = {op for op in todas_opcoes if op not in limpeza}
+                    # Intervalo Humanizado (Random entre 90% e 110% do tempo base)
+                    jitter = random.uniform(self.intervalo_base * 0.9, self.intervalo_base * 1.1)
+                    time.sleep(jitter)
 
-                    if primeira_rodada:
-                        especialidades_anteriores = opcoes_limpas
-                        print(f"Monitorando {len(opcoes_limpas)} especialidades.")
-                        
-                        # --- LOG DO ESTADO INICIAL ---
-                        for esp in opcoes_limpas:
-                            registrar_log("INICIO_EXECUCAO", esp)
-                        
-                        primeira_rodada = False
-                    else:
-                        novas = opcoes_limpas - especialidades_anteriores
-                        removidas = especialidades_anteriores - opcoes_limpas
-                        
-                        # Filtro de Interesse (Blacklist)
-                        novas_interessantes = {v for v in novas if v not in ESPECIALIDADES_IGNORAR}
-
-                        if novas_interessantes:
-                            texto = ", ".join(novas_interessantes)
-                            msg = f"🚨 VAGA: {texto}"
-                            print(f"\n[URGENTE] {msg}")
-                            
-                            total_vagas_sessao += len(novas_interessantes)
-                            
-                            # Tira Print e Notifica
-                            nome_print = "vaga.png"
-                            driver.save_screenshot(nome_print)
-                            enviar_telegram_com_foto(msg, nome_print)
-                            enviar_email("Monitor HU: Vaga Encontrada", f"Vagas disponíveis: {texto}")
-                            tocar_alarme_universal(f"Atenção! Vaga para {texto}")
-                            
-                            try: os.remove(nome_print)
-                            except: pass
-                        
-                        # Loga tudo (Mesmo o que foi ignorado)
-                        for esp in novas: registrar_log("ADICIONADA", esp)
-                        for esp in removidas: registrar_log("REMOVIDA", esp)
-
-                        if removidas:
-                            print(f"\n[-] Saiu: {', '.join(removidas)}")
-
-                        especialidades_anteriores = opcoes_limpas
-                    
-                    # Mostra NÚMERO DE VAGAS no terminal (ex: 454545...)
-                    print(len(opcoes_limpas), end="", flush=True)
-                    
-                    time.sleep(INTERVALO)
-
-            except TimeoutException:
-                print("\n[LENTIDÃO] Site demorando... Recarregando.", end="")
-            except NoSuchElementException:
-                raise Exception("Elemento sumiu (Sessão deve ter caído)")
+            except KeyboardInterrupt:
+                self._finalizar_gracefully()
+                break
             except Exception as e:
-                print(f"\n[ERRO CRÍTICO] {e}. Reiniciando em 10s...")
-                tocar_alarme_universal("Erro crítico.")
-                try: 
-                    if driver: driver.quit()
+                logger.error(f"Erro Crítico: {e}. Reiniciando...")
+                self._tocar_alarme("Erro crítico.")
+                try: self.driver.quit()
                 except: pass
                 time.sleep(10)
 
-    # --- ENCERRAMENTO ELEGANTE (CTRL+C) ---
-    except KeyboardInterrupt:
-        fim_sessao = datetime.now()
-        tempo_total = str(fim_sessao - inicio_sessao).split('.')[0]
-        
-        msg_fim = (
-            f"🛑 ROBÔ DESLIGADO MANUALMENTE\n"
-            f"⏱️ Tempo online: {tempo_total}\n"
-            f"🔎 Vagas encontradas: {total_vagas_sessao}"
-        )
-        
-        print("\n" + "="*40)
-        print("ENCERRANDO...")
-        print(msg_fim)
-        print("="*40)
-        
-        enviar_telegram_com_foto(msg_fim)
-        
-        try:
-            if driver: driver.quit()
+    def _finalizar_gracefully(self):
+        duracao = str(datetime.now() - self.inicio_sessao).split('.')[0]
+        msg = (f"🛑 Fim Manual.\nTempo: {duracao}\nVagas Totais: {self.total_vagas_sessao}")
+        print(f"\n\n{msg}")
+        self._enviar_telegram(msg)
+        try: self.driver.quit()
         except: pass
         sys.exit(0)
+
+# --- ENTRADA DO PROGRAMA (CLI ARGS) ---
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='Monitor de Vagas HU-USP')
+    parser.add_argument('--intervalo', type=int, default=120, help='Tempo médio entre verificações (segundos)')
+    args = parser.parse_args()
+
+    bot = MonitorHU(intervalo_base=args.intervalo)
+    bot.rodar()
