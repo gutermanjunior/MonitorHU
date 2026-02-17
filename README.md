@@ -1,5 +1,5 @@
 🏥 Monitor de Vagas HU-USP
-> Status: ✅ Funcional e Estável (v11.0)
+> Status: ✅ Funcional e Estável (v16.0)
 > 
 Um robô de automação inteligente desenvolvido em Python para monitorar a disponibilidade de vagas de especialidades médicas no sistema do Hospital Universitário da USP (ResHU).
 O objetivo deste projeto é ajudar pacientes e alunos a encontrar vagas de especialidades concorridas (como Dermatologia, Cardiologia, etc.) sem precisar atualizar a página manualmente o dia inteiro.
@@ -43,7 +43,7 @@ O sistema precisa das suas senhas para funcionar, mas nunca colocamos senhas dir
 <!-- end list -->
 # --- DADOS DE ACESSO AO HU ---
 HU_USER=seu_numero_usp
-HU_DATA=10/03/1993
+HU_DATA=DD/MM/AAAA
 
 # --- NOTIFICAÇÃO POR E-MAIL (GMAIL) ---
 # Necessário ativar "Verificação em 2 etapas" e criar uma "Senha de App" no Google.
