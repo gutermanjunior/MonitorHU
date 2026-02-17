@@ -3,3 +3,5 @@ webdriver-manager
 requests
 python-dotenv
 urllib3<2
+pandas
+matplotlib
