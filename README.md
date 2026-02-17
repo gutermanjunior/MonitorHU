@@ -3,16 +3,29 @@
 > 
 Um robô de automação inteligente desenvolvido em Python para monitorar a disponibilidade de vagas de especialidades médicas no sistema do Hospital Universitário da USP (ResHU).
 O objetivo deste projeto é ajudar pacientes e alunos a encontrar vagas de especialidades concorridas (como Dermatologia, Cardiologia, etc.) sem precisar atualizar a página manualmente o dia inteiro.
-✨ Funcionalidades
- * 🔍 Monitoramento Contínuo: Verifica a lista de especialidades a cada X segundos automaticamente.
- * 📱 Notificações via Telegram: Receba um alerta no celular com print da tela assim que uma vaga abrir.
- * 📧 Notificações via E-mail: Envia um aviso para seu e-mail (USP ou Pessoal).
- * 🔊 Alertas Sonoros:
-   * Windows: Emite um Bip sonoro.
-   * macOS: O computador fala qual vaga abriu (Voz: Luciana).
- * 🛡️ Resiliência: Se a internet cair ou o navegador travar, o robô reinicia sozinho.
- * 📊 Histórico de Dados: Salva todas as vagas que abriram e fecharam em um arquivo .csv para análise futura.
- * 👻 Modo Fantasma: Opção de rodar sem abrir a janela do navegador (headless).
+✨ Funcionalidades Detalhadas
+🤖 Automação e Inteligência
+ * Monitoramento Contínuo: Verifica a lista de especialidades automaticamente em intervalos inteligentes.
+ * Agendamento Inteligente (Smart Scheduling):
+   * Horário Comercial: Verificações frequentes e aleatórias (para evitar detecção).
+   * Madrugada (22h-06h): Reduz drasticamente a frequência para economizar recursos e evitar bloqueios.
+ * Persistência de Sessão (Cookies): Salva sua sessão de login. Se o robô reiniciar, ele tenta entrar direto sem pedir CAPTCHA novamente.
+ * Recuperação de Falhas: Se a internet cair ou o navegador travar, o sistema reinicia o processo automaticamente.
+ * Modo Fantasma (Headless): Opção de rodar o navegador em segundo plano, sem abrir janelas.
+🎯 Modos de Operação
+ * Modo Geral (Padrão): Monitora todas as vagas, exceto as que estiverem na "Lista Negra" (ex: Pediatria, Odontologia).
+ * Modo Sniper (Alvos): Você define uma lista específica (ex: "Cardio", "Dermato"). O robô ignora tudo o que não for seu alvo.
+📱 Notificações e Controle
+ * Telegram Bidirecional (Controle Remoto):
+   * Receba prints da tela e alertas em tempo real.
+   * Envie comandos para o robô direto pelo chat (Pausar, Retomar, Pedir Status).
+ * E-mail: Envia alertas formais para seu e-mail USP ou Pessoal.
+ * Alertas Sonoros:
+   * Windows: Bip sonoro.
+   * macOS: O computador fala em voz alta qual vaga abriu.
+📊 Dados e Relatórios
+ * Log Histórico: Salva todas as movimentações em historico_especialidades.csv.
+ * Gráficos Automáticos: Gera gráficos de horários de pico sob demanda via comando do Telegram.
 🛠️ Pré-requisitos
 Antes de começar, certifique-se de ter instalado:
  * Python 3.8+: Baixar aqui
@@ -31,15 +44,14 @@ macOS / Linux:
 python3 -m venv venv
 source venv/bin/activate
 
-(Você saberá que funcionou se aparecer um (venv) no início da linha do terminal).
 3. Instalar Dependências
 Com o ambiente ativado, instale as bibliotecas necessárias:
 pip install -r requirements.txt
 
 ⚙️ Configuração (Crucial)
 O sistema precisa das suas senhas para funcionar, mas nunca colocamos senhas direto no código. Usamos um arquivo secreto chamado .env.
- * Na pasta do projeto, crie um arquivo novo chamado .env (sem nome antes do ponto).
- * Abra esse arquivo com o Bloco de Notas e cole o modelo abaixo, preenchendo com seus dados:
+ * Na pasta do projeto, crie um arquivo novo chamado .env.
+ * Cole o modelo abaixo, preenchendo com seus dados:
 <!-- end list -->
 # --- DADOS DE ACESSO AO HU ---
 HU_USER=seu_numero_usp
@@ -56,33 +68,40 @@ TELEGRAM_TOKEN=seu_token_aqui
 TELEGRAM_CHAT_ID=seu_id_aqui
 
 🤖 Como conseguir as chaves do Telegram?
-Se você nunca criou um bot, siga este guia rápido:
- * Crie o Bot:
-   * Abra o Telegram e busque por @BotFather.
-   * Envie /newbot.
-   * Dê um nome (ex: Monitor HU) e um username (ex: monitor_hu_bot).
-   * Ele vai te dar um TOKEN (algo como 123456:ABC-DEF...). Copie e cole no .env.
- * Pegue seu ID:
-   * Busque por @userinfobot no Telegram e clique em Iniciar.
-   * Ele vai te responder com um número (ex: 811632084). Esse é o seu TELEGRAM_CHAT_ID.
- * Ative o Bot:
-   * Busque pelo nome do seu bot recém-criado e envie um "Oi" para ele. Isso permite que ele te mande mensagens.
+ * Busque por @BotFather no Telegram e envie /newbot.
+ * Dê um nome e username para receber seu TOKEN.
+ * Busque por @userinfobot para descobrir seu CHAT ID (número).
+ * Importante: Envie um "Oi" para o seu novo bot antes de rodar o programa.
 ▶️ Como Usar
-Com tudo configurado, basta rodar o comando no terminal:
-Modo Padrão (Recomendado)
-Abre o navegador, você faz o login manual (resolve o CAPTCHA) e o robô assume a partir daí. Verifica a cada 2 minutos.
+Execução Básica
+Abre o navegador e inicia o monitoramento padrão (Intervalo ~120s).
 python MonitorHU.py
 
-Comandos Avançados
-Você pode personalizar o comportamento sem mexer no código:
- * Alterar tempo de verificação (ex: a cada 30 segundos):
-   python MonitorHU.py --intervalo 30
+Argumentos de Linha de Comando (CLI)
+Você pode personalizar a execução sem mexer no código:
+ * Modo Sniper (Só avisa o que você quer):
+   python MonitorHU.py --alvos "cardiologia,dermatologia"
 
-   (Cuidado: Intervalos muito curtos podem bloquear seu IP).
+ * Alterar velocidade (Cuidado com bloqueios):
+   python MonitorHU.py --intervalo 60
+
  * Modo Invisível (Headless):
-   Roda o navegador em segundo plano, sem abrir janela.
    python MonitorHU.py --headless
 
+🎮 Comandos do Telegram
+Uma vez que o robô esteja rodando, você pode controlá-lo enviando mensagens no chat do Telegram:
+| Comando | Descrição |
+|---|---|
+| /status | Mostra tempo de execução, modo atual e quantas vagas estão visíveis. |
+| /list | Envia uma lista em texto de todas as especialidades disponíveis agora. |
+| /print | Tira um Screenshot da tela do navegador e te envia. |
+| /pause | Pausa o monitoramento temporariamente (útil para manutenção). |
+| /resume | Retoma o monitoramento. |
+| /relatorio | Gera e envia um Gráfico mostrando os horários que mais abrem vagas. |
+| /alvos | Lista quais especialidades estão na sua mira (Modo Sniper). |
+| /add [nome] | Adiciona uma nova especialidade aos alvos. Ex: /add Otorrino |
+| /remove [nome] | Remove uma especialidade dos alvos. |
+| /ping | Teste de conexão (Pong!). |
 📊 Analisando os Dados
 O robô cria automaticamente um arquivo chamado historico_especialidades.csv.
 Você pode abrir este arquivo no Excel para ver:
