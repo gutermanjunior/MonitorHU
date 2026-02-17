@@ -42,6 +42,7 @@ Uma vez rodando, você pode controlar o bot enviando mensagens privadas para ele
 | `/print`    | Tira um screenshot da tela atual do navegador e envia para você.         |
 | `/pause`    | Pausa temporariamente as verificações.                                   |
 | `/resume`   | Retoma o monitoramento.                                                  |
+| `/list` | Lista as especialidades disponíveis no momento em formato de texto. |
 | `/relatorio` | Gera um gráfico visual baseada no histórico (CSV) e envia no chat. |
 | `/add [NOME]`    | Adiciona uma nova especialidade à lista de alvos em tempo real.        |
 | `/remove [NOME]` | Remove uma especialidade da lista de alvos.                           |
