@@ -72,6 +72,37 @@ O sistema utiliza uma arquitetura modular para facilitar a manutenção:
 
 ---
 
+🤖 Como configurar o Telegram (Passo a Passo)
+Para receber notificações no seu celular, você precisa criar um "robô" pessoal no Telegram. É gratuito, rápido e não exige conhecimentos de programação.
+Passo 1: Criar o seu Robô (Token)
+ * Abra o Telegram e procure pelo usuário @BotFather (ele tem um selo azul de verificado).
+ * Clique em Começar (ou envie a mensagem /start).
+ * Envie o comando: /newbot
+ * O BotFather vai pedir um Nome para o seu robô (pode ser qualquer coisa).
+   * Exemplo: Monitor HU do Guterman
+ * Agora ele vai pedir um Username (deve ser único no mundo e terminar obrigatoriamente em bot).
+   * Exemplo: monitor_hu_vagas_2024_bot
+ * Se o nome estiver disponível, o BotFather enviará uma mensagem de parabéns. Procure pela frase "Use this token to access the HTTP API:".
+ * O código logo abaixo é o seu TOKEN. Copie esse código (ele se parece com: 123456789:ABCdefGHIjkl...).
+Passo 2: Descobrir o seu ID (Chat ID)
+O robô precisa saber o "endereço" do seu chat para enviar mensagens só para você.
+ * No Telegram, procure pelo usuário @userinfobot (ou qualquer bot de ID).
+ * Clique em Começar (ou envie /start).
+ * Ele responderá imediatamente com seus dados. Procure pelo número ao lado de Id.
+   * Exemplo: 811632084
+ * Copie esse número.
+Passo 3: Ativar e Configurar
+ * Muito Importante: Antes de rodar o programa, procure pelo nome de usuário do seu robô (aquele que você criou no Passo 1) e envie um "Oi" para ele. Isso autoriza o robô a te mandar mensagens.
+ * Abra o arquivo .env na pasta do programa (se não tiver, crie um baseado no .env.example).
+ * Cole os dados que você obteve:
+<!-- end list -->
+TELEGRAM_TOKEN=cole_o_token_aqui
+TELEGRAM_CHAT_ID=cole_o_seu_id_aqui
+
+
+
+---
+
 ## Aviso Legal
 
 Este software é uma ferramenta de automação pessoal desenvolvida para fins educacionais e de auxílio próprio.  O uso de bots deve ser feito de maneira responsável para não sobrecarregar os serviços públicos.  O autor não se responsabiliza pelo uso indevido da ferramenta.
