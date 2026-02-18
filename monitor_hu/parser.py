@@ -1,4 +1,5 @@
 import os
+import time
 import pickle
 from pathlib import Path
 from selenium import webdriver
@@ -9,7 +10,6 @@ from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
 
 # Caminhos organizados (Salva cookies na pasta data/)
-# __file__ é o arquivo atual (parser.py). parent é monitor_hu. parent.parent é MonitorHU (raiz)
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
 DATA_DIR.mkdir(exist_ok=True)
@@ -37,8 +37,6 @@ class HUParser:
         options.add_experimental_option("excludeSwitches", ["enable-automation"])
         options.add_experimental_option('useAutomationExtension', False)
 
-        # Correção para o erro do Selenium Manager:
-        # Usa o ChromeDriverManager para baixar e gerenciar o driver automaticamente
         service = Service(ChromeDriverManager().install())
         return webdriver.Chrome(service=service, options=options)
 
@@ -55,7 +53,6 @@ class HUParser:
                 self.driver.refresh()
                 return True
             except Exception as e:
-                print(f"Erro ao carregar cookies: {e}")
                 return False
         return False
 
@@ -63,8 +60,8 @@ class HUParser:
         try:
             with open(COOKIES_FILE, "wb") as f:
                 pickle.dump(self.driver.get_cookies(), f)
-        except Exception as e:
-            print(f"Erro ao salvar cookies: {e}")
+        except Exception:
+            pass
 
     def manual_login(self):
         wait = WebDriverWait(self.driver, 15)
@@ -76,22 +73,22 @@ class HUParser:
         matricula.clear()
         matricula.send_keys(self.HU_USER)
 
-        data = wait.until(
+        data_field = wait.until(
             EC.element_to_be_clickable((By.ID, "PacienteDataNascimento"))
         )
 
-        # Limpa campo via JS para evitar conflito com máscara
-        self.driver.execute_script(
-            "arguments[0].value = '';", data
-        )
-
-        data.click()
-        data.send_keys(self.HU_DATA)
+        # Método antigo: Digitação Humana (Tecla por tecla)
+        # Isso evita quebra da máscara de data do site
+        data_field.click()
+        data_field.clear()
+        
+        for digito in self.HU_DATA:
+            data_field.send_keys(digito)
+            time.sleep(0.1)  # Pequeno delay para a máscara processar
 
         print("🔐 Resolva o CAPTCHA manualmente no navegador.")
         print("Aguardando login ser concluído...")
         
-        # Espera inteligente: detecta quando entrou no sistema
         try:
             WebDriverWait(self.driver, 300).until(
                 EC.presence_of_element_located((By.ID, "Especialidade"))
@@ -105,15 +102,13 @@ class HUParser:
         self.open()
 
         if self.load_cookies():
-            # Verifica se o cookie ainda vale
             try:
                 WebDriverWait(self.driver, 5).until(
                     EC.presence_of_element_located((By.ID, "Especialidade"))
                 )
-                print("Sessão restaurada via Cookies.")
                 return
             except:
-                print("Cookies expirados.")
+                pass
 
         print("Necessário login manual.")
         self.manual_login()
@@ -138,8 +133,7 @@ class HUParser:
             
             return results
             
-        except Exception as e:
-            print(f"Erro ao ler dropdown: {e}")
+        except Exception:
             return set()
 
     def close(self):
