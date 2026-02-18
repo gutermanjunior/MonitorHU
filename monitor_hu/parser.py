@@ -52,7 +52,7 @@ class HUParser:
                         self.driver.add_cookie(cookie)
                 self.driver.refresh()
                 return True
-            except Exception as e:
+            except Exception:
                 return False
         return False
 
@@ -67,29 +67,42 @@ class HUParser:
         wait = WebDriverWait(self.driver, 15)
 
         print("Aguardando formulário...")
+        
+        # 1. Matrícula (Campo simples, digitação normal funciona)
         matricula = wait.until(
             EC.element_to_be_clickable((By.ID, "PacienteMatricula"))
         )
         matricula.clear()
         matricula.send_keys(self.HU_USER)
 
+        # 2. Data de Nascimento (Campo com máscara problemática)
+        # SOLUÇÃO DEFINITIVA: Injeção direta via JavaScript
+        print("Preenchendo data via injeção JavaScript...")
         data_field = wait.until(
-            EC.element_to_be_clickable((By.ID, "PacienteDataNascimento"))
+            EC.presence_of_element_located((By.ID, "PacienteDataNascimento"))
         )
-
-        # Método antigo: Digitação Humana (Tecla por tecla)
-        # Isso evita quebra da máscara de data do site
-        data_field.click()
-        data_field.clear()
         
-        for digito in self.HU_DATA:
-            data_field.send_keys(digito)
-            time.sleep(0.1)  # Pequeno delay para a máscara processar
+        # O script abaixo define o valor e dispara os eventos que o site espera
+        # para validar o campo (input, change, blur)
+        js_script = """
+            var el = arguments[0];
+            var val = arguments[1];
+            
+            // Define o valor diretamente
+            el.value = val;
+            
+            // Simula os eventos de interação humana para enganar a validação
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+            el.dispatchEvent(new Event('blur', { bubbles: true }));
+        """
+        self.driver.execute_script(js_script, data_field, self.HU_DATA)
 
         print("🔐 Resolva o CAPTCHA manualmente no navegador.")
         print("Aguardando login ser concluído...")
         
         try:
+            # Espera até 5 minutos (300s) pelo usuário logar
             WebDriverWait(self.driver, 300).until(
                 EC.presence_of_element_located((By.ID, "Especialidade"))
             )
