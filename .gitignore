@@ -209,3 +209,8 @@ __marimo__/
 
 old/
 data/hu_cookies.pkl
+venv/
+__pycache__/
+.env
+hu_cookies.pkl
+old/

@@ -6,3 +6,4 @@ urllib3<2
 pandas
 matplotlib
 pyyaml
+rich

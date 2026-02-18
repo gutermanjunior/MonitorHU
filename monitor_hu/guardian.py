@@ -2,7 +2,7 @@ import subprocess
 import sys
 import time
 from datetime import datetime, timedelta
-from notifier import send_telegram
+from .notifier import send_telegram
 
 MAX_CRASHES = 5
 CRASH_WINDOW_SECONDS = 60
@@ -33,7 +33,6 @@ def main():
                 now = datetime.now()
                 crash_times.append(now)
 
-                # Remove crashes fora da janela
                 crash_times = [
                     t for t in crash_times
                     if (now - t).total_seconds() <= CRASH_WINDOW_SECONDS
@@ -42,21 +41,16 @@ def main():
                 if len(crash_times) >= MAX_CRASHES:
                     send_telegram(
                         "🚨 ALERTA CRÍTICO 🚨\n"
-                        "Monitor entrou em crash loop.\n"
-                        "Reinicialização interrompida."
+                        "Crash loop detectado. Monitor interrompido."
                     )
-                    print("Crash loop detectado. Parando.")
                     break
 
                 send_telegram(
-                    f"🔴 Monitor caiu.\n"
-                    f"Reiniciando em {backoff}s..."
+                    f"🔴 Monitor caiu. Reiniciando em {backoff}s..."
                 )
 
                 time.sleep(backoff)
-
                 backoff = min(backoff * 2, MAX_BACKOFF)
-
                 monitor = start_monitor()
 
             time.sleep(2)

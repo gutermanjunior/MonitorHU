@@ -1,110 +1,84 @@
 import os
-import time
 import pickle
-from pathlib import Path
-
 from selenium import webdriver
 from selenium.webdriver.common.by import By
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
-from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 
-from dotenv import load_dotenv
 
-load_dotenv()
-
-HU_USER = os.getenv("HU_USER")
-HU_DATA = os.getenv("HU_DATA")
-
-DATA_DIR = Path("data")
-DATA_DIR.mkdir(exist_ok=True)
-
-COOKIE_FILE = DATA_DIR / "hu_cookies.pkl"
-
-HU_URL = "https://sistemashu.hu.usp.br/"  # ajuste se necessário
+URL = "https://sistemashu.hu.usp.br/reshu/paciente"
+COOKIES_FILE = "hu_cookies.pkl"
 
 
 class HUParser:
 
-    def __init__(self, headless=False):
-        self.driver = self._create_driver(headless)
+    def __init__(self, HU_USER, HU_DATA):
+        self.HU_USER = HU_USER
+        self.HU_DATA = HU_DATA
+        self.driver = self._init_driver()
 
-    def _create_driver(self, headless):
-        options = Options()
-        if headless:
-            options.add_argument("--headless=new")
+    def _init_driver(self):
+        options = webdriver.ChromeOptions()
+        options.add_argument("--ignore-certificate-errors")
+        options.add_argument("--ignore-ssl-errors")
+        options.add_argument("--disable-web-security")
+        options.add_argument("--allow-running-insecure-content")
+        options.add_argument("--log-level=3")
 
-        options.add_argument("--start-maximized")
-        options.add_argument("--disable-blink-features=AutomationControlled")
+        return webdriver.Chrome(options=options)
 
-        service = Service(ChromeDriverManager().install())
-        return webdriver.Chrome(service=service, options=options)
+    def open(self):
+        self.driver.get(URL)
 
-    def _save_cookies(self):
-        with open(COOKIE_FILE, "wb") as f:
+    def load_cookies(self):
+        if os.path.exists(COOKIES_FILE):
+            with open(COOKIES_FILE, "rb") as f:
+                cookies = pickle.load(f)
+                for cookie in cookies:
+                    self.driver.add_cookie(cookie)
+            self.driver.refresh()
+            return True
+        return False
+
+    def save_cookies(self):
+        with open(COOKIES_FILE, "wb") as f:
             pickle.dump(self.driver.get_cookies(), f)
 
-    def _load_cookies(self):
-        if not COOKIE_FILE.exists():
-            return False
+    def manual_login(self):
+        wait = WebDriverWait(self.driver, 15)
 
-        self.driver.get(HU_URL)
+        matricula = wait.until(
+            EC.element_to_be_clickable((By.ID, "PacienteMatricula"))
+        )
+        matricula.clear()
+        matricula.send_keys(self.HU_USER)
 
-        with open(COOKIE_FILE, "rb") as f:
-            cookies = pickle.load(f)
+        data = wait.until(
+            EC.element_to_be_clickable((By.ID, "PacienteDataNascimento"))
+        )
 
-        for cookie in cookies:
-            self.driver.add_cookie(cookie)
+        # limpa campo via JS
+        self.driver.execute_script(
+            "arguments[0].value = '';", data
+        )
 
-        self.driver.refresh()
-        return True
+        data.click()
+        data.send_keys(self.HU_DATA)
 
-    def _is_logged_in(self):
-        # Ajustar lógica conforme site real
-        return "logout" in self.driver.page_source.lower()
-
-    def _manual_login(self):
-        print("\n🔐 Realize o login manualmente (resolver CAPTCHA)...")
-        self.driver.get(HU_URL)
-
-        # Preencher campos automaticamente
-        time.sleep(2)
-        self.driver.find_element(By.NAME, HU_USER).send_keys(HU_USER)
-        self.driver.find_element(By.NAME, HU_DATA.send_keys(HU_DATA)
-
-        print("Aguardando você resolver o CAPTCHA e clicar em entrar...")
+        print("🔐 Resolva o CAPTCHA manualmente.")
         input("Pressione ENTER após concluir o login...")
 
-        if self._is_logged_in():
-            print("✅ Login detectado. Salvando cookies...")
-            self._save_cookies()
-        else:
-            raise Exception("Falha no login.")
+        self.save_cookies()
 
-    def ensure_authenticated(self):
-        if COOKIE_FILE.exists():
-            self._load_cookies()
-            time.sleep(2)
+    def ensure_logged(self):
+        self.open()
 
-            if self._is_logged_in():
-                return
+        if self.load_cookies():
+            print("Cookies carregados.")
+            return
 
-        self._manual_login()
-
-    def fetch_especialidades(self):
-        self.ensure_authenticated()
-
-        # Aqui você navega até o dropdown
-        # Ajuste o seletor conforme o site real
-        dropdown = self.driver.find_elements(By.TAG_NAME, "option")
-
-        especialidades = [
-            option.text.strip()
-            for option in dropdown
-            if option.text.strip()
-        ]
-
-        return especialidades
+        print("Realizando login manual...")
+        self.manual_login()
 
     def close(self):
         self.driver.quit()
