@@ -1,48 +1,165 @@
-# 🏥 HU-USP Monitor – Especialidades
+# 🏥 Monitor HU-USP (v2) – Especialidades
 
-Sistema pessoal de monitoramento das especialidades do Hospital Universitário da USP.
+Status: ✅ Estável (Modular & Resiliente)  
+Sistema de automação e monitoramento para detectar disponibilidade de vagas de especialidades médicas no Hospital Universitário da USP.  
+Esta versão (v2) foi reescrita para ser modular, resiliente a falhas e rodar como um serviço contínuo.
 
 ---
 
 ## 🎯 Objetivo
 
-- 🔎 Detectar alterações na lista de especialidades  
-- 📈 Registrar histórico estruturado das mudanças  
-- 🔔 Notificar quando especialidades forem adicionadas ou removidas  
-- 🛡️ Garantir funcionamento contínuo via Guardian  
+- 🔎 Detectar disponibilidade/alterações nas especialidades
+- 📈 Registrar histórico estruturado das mudanças
+- 🔔 Notificar quando novas vagas surgirem (ex.: Telegram)
+- 🛡️ Garantir funcionamento contínuo via Guardian (watchdog)
+
+---
+
+## ✨ Funcionalidades
+
+### 🧠 Inteligência & Automação
+
+- Arquitetura modular: código separado em serviços (`parser`, `notifier`, `state`, etc.) para fácil manutenção.
+- 🛡️ Guardian (Watchdog): processo sentinela que monitora o bot principal; se o monitor travar ou cair, o Guardian reinicia automaticamente.
+- Persistência de sessão: salva cookies para evitar logins manuais repetitivos.
+- ⏱️ Intervalos adaptativos: configuração via `config.yaml` para definir frequências diferentes (dia, noite, madrugada).
+
+---
+
+### 📱 Interface & Notificações
+
+- Dashboard CLI: painel visual no terminal com status, últimas vagas e histórico recente.
+- Telegram formatado: envia alertas com negrito e ícones quando novas vagas surgem.
+- Histórico local: mantém registro de alterações na pasta `data/`.
+
+---
+
+## 📂 Estrutura do Projeto
+
+```bash
+MonitorHU/
+│
+├── monitor_hu/           # Código Fonte (Pacote)
+│   ├── monitor.py        # Lógica principal e Dashboard
+│   ├── parser.py         # Automação do Browser (Selenium)
+│   ├── guardian.py       # Sentinela (Reinicia em caso de crash)
+│   ├── notifier.py       # Envio de mensagens (Telegram)
+│   ├── scheduler.py      # Gerenciador de intervalos de tempo
+│   └── state.py          # Gestão de estado e snapshots
+│
+├── data/                 # Dados gerados (Cookies, Logs, JSONs)
+├── config.yaml           # Configuração de horários
+├── .env                  # Credenciais (Não versionado)
+└── requirements.txt      # Dependências
+```
+
+---
+
+## 🛠️ Instalação
+
+Clone o repositório e entre na pasta:
+
+```bash
+git clone https://github.com/seu-usuario/MonitorHU.git
+cd MonitorHU
+```
+
+Crie e ative o ambiente virtual:
+
+- Windows:
+
+```bash
+python -m venv venv
+venv\Scripts\activate
+```
+
+- Linux/Mac:
+
+```bash
+python3 -m venv venv
+source venv/bin/activate
+```
+
+Instale as dependências:
+
+```bash
+pip install -r requirements.txt
+```
+
+---
+
+## ⚙️ Configuração
+
+### 1) Credenciais (`.env`)
+
+Crie um arquivo `.env` na raiz do projeto com seus dados:
+
+```bash
+# Acesso HU
+HU_USER=seu_numero_usp
+HU_DATA=dd/mm/aaaa
+
+# Telegram (Opcional, mas recomendado)
+TELEGRAM_TOKEN=seu_token
+TELEGRAM_CHAT_ID=seu_chat_id
+
+# Identificação da Máquina (Opcional)
+MACHINE_ID=meu_pc_casa
+```
+
+Nunca versionar `.env`. Adicione ao `.gitignore`:
+
+```bash
+.env
+data/
+logs/
+```
+
+---
+
+### 2) Intervalos (`config.yaml`)
+
+O arquivo `config.yaml` define a frequência de verificação (em minutos) por período do dia:
+
+```yaml
+intervals:
+  day:
+    start: 8
+    end: 18
+    minutes: 15   # Verifica a cada 15 min durante o dia
+  evening:
+    start: 18
+    end: 24
+    minutes: 30   # A cada 30 min à noite
+  night:
+    start: 0
+    end: 8
+    minutes: 60   # A cada 1h na madrugada
+```
 
 ---
 
 ## 🚀 Execução
 
-### ▶ Monitor
+Existem duas formas de rodar o sistema, sempre a partir da raiz `MonitorHU/`.
+
+### 🛡️ Opção 1: Modo Blindado (Recomendado)
+
+Roda o Guardian, que gerencia o monitor. Se der erro, ele reinicia o processo.
 
 ```bash
-python monitor.py
+python -m monitor_hu.guardian
 ```
-
-O monitor:
-
-- Executa verificações periódicas com intervalo adaptativo
-- Detecta diferenças entre snapshots
-- Registra apenas mudanças
-- Atualiza heartbeat para o Guardian
-- Exibe dashboard em CLI
 
 ---
 
-### 🛡️ Guardian (Watchdog)
+### ▶️ Opção 2: Modo Direto (Para Testes)
+
+Roda apenas o monitor. Se der erro, o programa fecha.
 
 ```bash
-python guardian.py
+python -m monitor_hu.monitor
 ```
-
-O Guardian:
-
-- Monitora o arquivo `heartbeat.json`
-- Detecta erros persistentes
-- Evita spam (rate limit configurável)
-- Pode enviar alertas via Telegram
 
 ---
 
@@ -60,126 +177,58 @@ Fluxo:
 
 ---
 
-## ⏱️ Intervalo Adaptativo
+## 🖥️ Dashboard CLI
 
-Configurado em `config.yaml`:
+Ao rodar, você verá uma interface como esta no terminal:
 
-```yaml
-intervals:
-  day:
-    start: 8
-    end: 18
-    minutes: 15
-  evening:
-    start: 18
-    end: 24
-    minutes: 30
-  night:
-    start: 0
-    end: 8
-    minutes: 60
-```
+```text
+╔════════════════════════════════════════════════════╗
+║  MONITOR HU-USP – Especialidades                   ║
+╠════════════════════════════════════════════════════╣
+║ Última verificação: 18/02 14:30:05                 ║
+║ Status: ✅ Conectado                               ║
+╠════════════════════════════════════════════════════╣
+║ NOVAS VAGAS (1)                                    ║
+║ • CARDIOLOGIA                                      ║
+╠════════════════════════════════════════════════════╣
+║ Histórico recente                                  ║
+║ 🟢 18/02 14:30: Cardiologia abriu                  ║
+║ 🔴 18/02 09:15: Dermatologia fechou                ║
+╚════════════════════════════════════════════════════╝
 
----
-
-## 🔐 Configuração Segura (.env)
-
-Crie um arquivo `.env` na raiz do projeto:
-
-```
-HU_USER=...
-HU_DATA=...
-
-EMAIL_CONTA=...
-EMAIL_SENHA=...
-EMAIL_DESTINO=...
-
-TELEGRAM_TOKEN=...
-TELEGRAM_CHAT_ID=...
-```
-
-Instale:
-
-```bash
-pip install python-dotenv selenium webdriver-manager
-```
-
-Nunca versionar `.env`.
-
-Adicionar ao `.gitignore`:
-
-```
-.env
-data/
-logs/
-```
-
----
-
-## 📊 Histórico de Dados
-
-### 📁 last_snapshot.json
-
-Armazena o estado atual da lista de especialidades.
-
-### 📄 history.csv
-
-Registra apenas mudanças detectadas:
-
-```
-timestamp,machine_id,action,especialidade
-2026-02-17T14:03:00,windows-main,added,Cardiologia
-2026-02-18T09:21:00,macbook,removed,Nefrologia
-```
-
----
-
-## 🖥️ Interface CLI
-
-Exemplo de saída:
-
-```
-╔════════════════════════════════════╗
-║  MONITOR HU-USP – Especialidades  ║
-╠════════════════════════════════════╣
-║ Última verificação: 17/02 21:03    ║
-║ Status: ✅ Conectado               ║
-╠════════════════════════════════════╣
-║ Mudanças detectadas                ║
-║ + Cardiologia                      ║
-║ - Nefrologia                       ║
-╚════════════════════════════════════╝
+💤 Próxima verificação em 15 minutos...
 ```
 
 ---
 
 ## 🛠️ Arquitetura
 
-- `monitor.py` → Orquestrador principal  
-- `guardian.py` → Watchdog externo  
-- `parser.py` → Autenticação + scraping (Selenium)  
-- `scheduler.py` → Intervalo adaptativo  
-- `state.py` → Snapshot + heartbeat  
-- `notifier.py` → Registro CSV + notificações  
-- `config.yaml` → Configuração estrutural  
-- `.env` → Credenciais  
+- `monitor_hu/monitor.py` → Orquestrador principal + Dashboard
+- `monitor_hu/guardian.py` → Watchdog externo (sentinela)
+- `monitor_hu/parser.py` → Autenticação + scraping (Selenium)
+- `monitor_hu/scheduler.py` → Intervalo adaptativo
+- `monitor_hu/state.py` → Estado local, snapshots e heartbeat
+- `monitor_hu/notifier.py` → Notificações (Telegram) + histórico
+- `config.yaml` → Configuração de horários e intervalos
+- `.env` → Credenciais e identificação da máquina
+- `data/` → Cookies, logs e registros
 
 Separação clara entre:
 
-- Configuração  
-- Segredos  
-- Estado  
-- Persistência  
-- Lógica  
+- Configuração
+- Segredos
+- Estado
+- Persistência
+- Lógica
 
 ---
 
 ## ⚠️ Aviso Legal
 
-Ferramenta desenvolvida para uso pessoal e educacional.
+Este software é para uso pessoal e educacional.
 
-- Não utilize intervalos agressivos  
-- Não sobrecarregue serviços públicos  
-- Respeite as políticas de uso  
+- Utilize intervalos de tempo razoáveis (como o padrão sugerido)
+- Não sobrecarregue os serviços do Hospital Universitário
+- Respeite as políticas de uso
 
-O autor não se responsabiliza por uso indevido.
+O autor não se responsabiliza por qualquer uso indevido desta ferramenta.
