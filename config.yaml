@@ -1,0 +1,16 @@
+intervals:
+  day:
+    start: 8
+    end: 18
+    minutes: 15
+  evening:
+    start: 18
+    end: 24
+    minutes: 30
+  night:
+    start: 0
+    end: 8
+    minutes: 60
+
+guardian:
+  error_repeat_minutes: 15
