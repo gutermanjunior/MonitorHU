@@ -1,8 +1,12 @@
 import os
 import time
 import sys
+import csv
 import traceback
+import pandas as pd
+import matplotlib.pyplot as plt
 from datetime import datetime
+from pathlib import Path
 from dotenv import load_dotenv
 
 # Imports locais
@@ -19,6 +23,9 @@ load_dotenv()
 
 HU_USER = os.getenv("HU_USER")
 HU_DATA = os.getenv("HU_DATA")
+BASE_DIR = Path(__file__).resolve().parent.parent
+DATA_DIR = BASE_DIR / "data"
+CSV_FILE = DATA_DIR / "history.csv"
 
 class MonitorService:
     def __init__(self):
@@ -27,46 +34,84 @@ class MonitorService:
         self.paused = False
         self.vagas_atuais = set()
         self.inicio_sessao = datetime.now()
-        
-        # Histórico visual para o Dashboard
         self.recent_history = []
+        
+        # Modo Sniper (Alvos)
+        self.alvos = [] # Ex: ["CARDIOLOGIA", "DERMATO"]
+        self.blacklist = ["PEDIATRIA", "ODONTOLOGIA"]
+
+    def _log_to_csv(self, evento, especialidade):
+        """Salva no CSV para gerar relatórios futuros"""
+        file_exists = CSV_FILE.exists()
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        try:
+            with open(CSV_FILE, mode='a', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                if not file_exists:
+                    writer.writerow(["Data_Hora", "Evento", "Especialidade"])
+                writer.writerow([timestamp, evento, especialidade])
+        except Exception as e:
+            print(f"Erro CSV: {e}")
+
+    def _gerar_grafico(self):
+        """Gera gráfico de barras com horários de pico"""
+        try:
+            if not CSV_FILE.exists(): return None
+            df = pd.read_csv(CSV_FILE)
+            df['Data_Hora'] = pd.to_datetime(df['Data_Hora'])
+            
+            # Filtra apenas adições
+            df_adds = df[df['Evento'] == 'added']
+            if len(df_adds) == 0: return "VAZIO"
+
+            df_adds['Hora'] = df_adds['Data_Hora'].dt.hour
+            contagem = df_adds['Hora'].value_counts().sort_index()
+
+            plt.figure(figsize=(10, 5))
+            contagem.plot(kind='bar', color='#2ecc71', edgecolor='black')
+            plt.title('Horários de Liberação de Vagas')
+            plt.xlabel('Hora do Dia')
+            plt.ylabel('Qtd Vagas')
+            plt.grid(axis='y', alpha=0.3)
+            
+            img_path = DATA_DIR / "relatorio_temp.png"
+            plt.savefig(img_path)
+            plt.close()
+            return str(img_path)
+        except Exception:
+            return None
 
     def _add_history(self, event_type, item):
-        """Adiciona evento ao histórico visual (mantém os últimos 5)"""
         timestamp = datetime.now().strftime("%d/%m %H:%M")
         msg = f"{timestamp}: {item}"
         icon = "🟢" if event_type == "added" else "🔴"
         self.recent_history.insert(0, (icon, msg))
-        
-        if len(self.recent_history) > 5:
-            self.recent_history.pop()
+        if len(self.recent_history) > 5: self.recent_history.pop()
 
     def _clear_screen(self):
         os.system('cls' if os.name == 'nt' else 'clear')
 
     def _render_dashboard(self, status="✅ Conectado", next_check=0):
-        """Desenha o painel visual no terminal"""
         self._clear_screen()
         now_str = datetime.now().strftime("%d/%m %H:%M:%S")
         count = len(self.vagas_atuais)
+        mode = f"🎯 SNIPER ({len(self.alvos)})" if self.alvos else "🌐 GERAL"
         
         print("╔════════════════════════════════════════════════════╗")
         print("║  MONITOR HU-USP – Especialidades                   ║")
         print("╠════════════════════════════════════════════════════╣")
         print(f"║ Última verificação: {now_str:<30} ║")
-        print(f"║ Status: {status:<38} ║")
+        print(f"║ Status: {status:<18} Modo: {mode:<13} ║")
         print("╠════════════════════════════════════════════════════╣")
         
         if count > 0:
-            print(f"║ NOVAS VAGAS ({count})                                  ║")
+            print(f"║ VAGAS DETECTADAS ({count})                                 ║")
             lista = sorted(list(self.vagas_atuais))
             for v in lista[:5]:
                 nome_display = (v[:45] + '..') if len(v) > 45 else v
                 print(f"║ • {nome_display:<46} ║")
-            
             if len(lista) > 5:
-                rest = len(lista) - 5
-                print(f"║ ... e mais {rest} especialidades...                  ║")
+                print(f"║ ... e mais {len(lista)-5} ...                                ║")
         else:
             print("║ NENHUMA VAGA DISPONÍVEL NO MOMENTO                 ║")
             
@@ -78,58 +123,104 @@ class MonitorService:
                 print(f"║ {icon} {txt_display:<44} ║")
         else:
             print("║ - Nenhuma alteração registrada ainda               ║")
-        
         print("╚════════════════════════════════════════════════════╝")
         
         if next_check > 0:
-            print(f"\n💤 Próxima verificação em {next_check} minutos (Ouvindo Telegram...)")
+            print(f"\n💤 Próx: {next_check}min (Comandos ativos...)")
         elif status.startswith("⏸️"):
-            print("\n⏸️ Monitoramento PAUSADO. Aguardando comando /resume...")
+            print("\n⏸️ PAUSADO. Aguardando /resume...")
 
     def handle_commands(self):
-        """Processa comandos recebidos pelo Telegram"""
+        """Central de Comandos do Telegram"""
         comandos = self.bot.get_updates()
-        
-        for cmd in comandos:
-            c = cmd.lower().split()[0]
+        for full_cmd in comandos:
+            parts = full_cmd.split()
+            cmd = parts[0].lower()
+            args = parts[1:] if len(parts) > 1 else []
             
-            if c == "/ping":
+            if cmd == "/ping":
                 self.bot.send("🏓 Pong!")
             
-            elif c == "/status":
+            elif cmd == "/status":
                 tempo = str(datetime.now() - self.inicio_sessao).split('.')[0]
-                status_icon = "⏸️ PAUSADO" if self.paused else "✅ RODANDO"
-                msg = (
-                    f"<b>STATUS MONITOR HU</b>\n"
-                    f"Status: {status_icon}\n"
-                    f"Uptime: {tempo}\n"
-                    f"Vagas visíveis: {len(self.vagas_atuais)}"
-                )
+                mode = f"🎯 SNIPER ({len(self.alvos)})" if self.alvos else "🌐 GERAL"
+                msg = (f"<b>STATUS MONITOR</b>\n"
+                       f"⏱️ Uptime: {tempo}\n"
+                       f"🛠️ Modo: {mode}\n"
+                       f"🔎 Vagas Visíveis: {len(self.vagas_atuais)}")
                 self.bot.send(msg)
 
-            elif c == "/list":
-                if not self.vagas_atuais:
-                    self.bot.send("ℹ️ Nenhuma vaga detectada ou lista vazia.")
+            elif cmd == "/list":
+                if not self.vagas_atuais: self.bot.send("ℹ️ Lista vazia.")
                 else:
-                    lista = sorted(list(self.vagas_atuais))
-                    msg = "📋 <b>LISTA DE ESPECIALIDADES:</b>\n\n"
-                    msg += "\n".join(f"• {v}" for v in lista)
+                    msg = "📋 <b>VAGAS ATUAIS:</b>\n\n" + "\n".join(f"• {v}" for v in sorted(self.vagas_atuais))
                     self.bot.send(msg)
 
-            elif c == "/pause":
+            elif cmd == "/print":
+                self.bot.send("📸 Tirando print...")
+                path = self.parser.take_screenshot("cmd_print.png")
+                if path:
+                    self.bot.send_photo("📸 Screenshot Atual", path)
+                    try: os.remove(path)
+                    except: pass
+                else: self.bot.send("❌ Erro ao tirar print.")
+
+            elif cmd == "/relatorio":
+                self.bot.send("📊 Gerando gráfico...")
+                path = self._gerar_grafico()
+                if path == "VAZIO": self.bot.send("ℹ️ Sem dados suficientes.")
+                elif path:
+                    self.bot.send_photo("📈 Horários de Pico", path)
+                    try: os.remove(path)
+                    except: pass
+                else: self.bot.send("❌ Erro ou sem arquivo CSV.")
+
+            elif cmd == "/pause":
                 self.paused = True
-                self.bot.send("⏸️ Monitoramento <b>PAUSADO</b>.")
+                self.bot.send("⏸️ Pausado.")
                 self._render_dashboard(status="⏸️ PAUSADO")
 
-            elif c == "/resume":
+            elif cmd == "/resume":
                 self.paused = False
-                self.bot.send("▶️ Monitoramento <b>RETOMADO</b>.")
+                self.bot.send("▶️ Retomado.")
                 self._render_dashboard(status="✅ Retomando...")
 
+            elif cmd == "/alvos":
+                if not self.alvos: self.bot.send("🌐 Modo GERAL (Monitorando tudo exceto blacklist)")
+                else: self.bot.send(f"🎯 <b>ALVOS ATUAIS:</b>\n" + "\n".join(self.alvos))
+
+            elif cmd == "/add":
+                if args:
+                    novo = " ".join(args).upper()
+                    if novo not in self.alvos:
+                        self.alvos.append(novo)
+                        self.bot.send(f"✅ Alvo adicionado: {novo}")
+                else: self.bot.send("⚠️ Use: /add NOME")
+
+            elif cmd == "/remove":
+                if args:
+                    nome = " ".join(args).upper()
+                    self.alvos = [a for a in self.alvos if nome not in a]
+                    self.bot.send(f"🗑️ Removido: {nome}")
+                else: self.bot.send("⚠️ Use: /remove NOME")
+            
+            elif cmd == "/help":
+                help_txt = (
+                    "🤖 <b>COMANDOS:</b>\n"
+                    "/status - Estado do bot\n"
+                    "/list - Ver vagas atuais\n"
+                    "/print - Foto da tela\n"
+                    "/relatorio - Gráfico de horários\n"
+                    "/add [NOME] - Adicionar alvo\n"
+                    "/remove [NOME] - Remover alvo\n"
+                    "/alvos - Ver lista de alvos\n"
+                    "/pause - Pausar\n"
+                    "/resume - Retomar"
+                )
+                self.bot.send(help_txt)
+
     def smart_sleep(self, minutes):
-        """Dorme mas continua ouvindo o Telegram"""
         seconds = minutes * 60
-        
         if self.paused:
             self._render_dashboard(status="⏸️ PAUSADO")
             while self.paused:
@@ -139,16 +230,13 @@ class MonitorService:
 
         for _ in range(int(seconds)):
             self.handle_commands()
-            if self.paused: 
-                return
+            if self.paused: return
             time.sleep(1)
 
     def run(self):
         self._clear_screen()
-        print("🚀 Monitor HU Iniciado (v2.3)")
-        
-        try:
-            self.bot.send("🚀 Monitor Iniciado")
+        print("🚀 Monitor HU (v2.4 - Full Commands)")
+        try: self.bot.send("🚀 Monitor Iniciado (v2.4)")
         except: pass
         
         try:
@@ -175,33 +263,35 @@ class MonitorService:
                 novas = self.vagas_atuais - vagas_anteriores
                 removidas = vagas_anteriores - self.vagas_atuais
 
-                # CORREÇÃO DO <B>: Separação de mensagens
-                if novas:
-                    # Mensagem formatada (HTML) apenas para o Telegram
-                    msg_tg = "🟢 <b>NOVAS VAGAS:</b>\n" + "\n".join(f"• {n}" for n in novas)
+                # --- FILTRO SNIPER ---
+                if self.alvos:
+                    novas_relevantes = {v for v in novas if any(alvo in v.upper() for alvo in self.alvos)}
+                else:
+                    novas_relevantes = {v for v in novas if v not in self.blacklist}
+
+                if novas_relevantes:
+                    msg_tg = "🟢 <b>NOVAS VAGAS:</b>\n" + "\n".join(f"• {n}" for n in novas_relevantes)
                     self.bot.send(msg_tg)
-                    
-                    # Atualiza o histórico visual (Dashboard)
-                    for n in novas:
+                    for n in novas_relevantes:
                         self._add_history("added", f"{n} abriu")
                 
+                # Registra no CSV para o /relatorio
+                for n in novas: self._log_to_csv("added", n)
+                for r in removidas: self._log_to_csv("removed", r)
+
                 if removidas:
-                    for r in removidas:
-                        self._add_history("removed", f"{r} fechou")
-                    # Log rápido de fechamento se quiser debug
-                    # print(f"🔴 Fechou: {removidas}")
+                    for r in removidas: self._add_history("removed", f"{r} fechou")
 
                 if novas or removidas:
                     state.save_snapshot(list(self.vagas_atuais))
                 
                 minutos = scheduler.get_interval_minutes()
                 self._render_dashboard(status="✅ Conectado", next_check=minutos)
-                
                 self.smart_sleep(minutos)
 
         except KeyboardInterrupt:
             print("\nParando...")
-            try: self.bot.send("🛑 Monitor desligado manualmente.")
+            try: self.bot.send("🛑 Desligado manualmente.")
             except: pass
         except Exception:
             error_trace = traceback.format_exc()
@@ -209,12 +299,10 @@ class MonitorService:
             except: pass
             raise
         finally:
-            if self.parser:
-                self.parser.close()
+            if self.parser: self.parser.close()
 
 def main():
-    service = MonitorService()
-    service.run()
+    MonitorService().run()
 
 if __name__ == "__main__":
     main()

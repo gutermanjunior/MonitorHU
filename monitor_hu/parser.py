@@ -149,5 +149,22 @@ class HUParser:
         except Exception:
             return set()
 
+    def take_screenshot(self, filename="screenshot.png"):
+        """Tira um print da tela e salva no disco"""
+        try:
+            # Tenta expandir o dropdown para ver as opções no print
+            try:
+                dropdown = self.driver.find_element(By.ID, "Especialidade")
+                dropdown.click()
+                time.sleep(0.5)
+            except: pass
+
+            path = DATA_DIR / filename
+            self.driver.save_screenshot(str(path))
+            return str(path)
+        except Exception as e:
+            print(f"Erro ao tirar print: {e}")
+            return None
+
     def close(self):
         self.driver.quit()
