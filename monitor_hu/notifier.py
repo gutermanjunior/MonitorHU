@@ -15,9 +15,11 @@ def send_telegram(message: str):
 
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
 
+    # Adicionamos 'parse_mode': 'HTML' para o Telegram entender as tags <b>, <i>, etc.
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
-        "text": message
+        "text": message,
+        "parse_mode": "HTML"
     }
 
     try:
