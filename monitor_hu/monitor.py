@@ -7,10 +7,10 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from scheduler import get_interval_minutes
-from parser import HUParser
-from state import load_snapshot, save_snapshot, update_heartbeat
-from notifier import log_changes, notify_console
+from .scheduler import get_interval_minutes
+from .parser import HUParser
+from .state import load_snapshot, save_snapshot, update_heartbeat
+from .notifier import log_changes, notify_console
 
 load_dotenv()
 

@@ -1,0 +1,13 @@
+[project]
+name = "monitor-hu"
+version = "0.1.0"
+description = "Monitor de especialidades do HU-USP"
+requires-python = ">=3.10"
+
+dependencies = [
+    "selenium",
+    "webdriver-manager",
+    "python-dotenv",
+    "pyyaml",
+    "rich"
+]
