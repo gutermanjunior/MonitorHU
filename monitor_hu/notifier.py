@@ -1,11 +1,16 @@
 import os
 import requests
+import smtplib
+from email.message import EmailMessage
 from dotenv import load_dotenv
 
 load_dotenv()
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+EMAIL_CONTA = os.getenv("EMAIL_CONTA")
+EMAIL_SENHA = os.getenv("EMAIL_SENHA")
+EMAIL_DESTINO = os.getenv("EMAIL_DESTINO")
 
 # --- Função Legada (Guardian) ---
 def send_telegram(message: str):
@@ -14,6 +19,27 @@ def send_telegram(message: str):
         TelegramBot().send(message)
     except: pass
 
+# --- Novo: Função de E-mail ---
+def send_email(assunto: str, corpo: str):
+    """Envia um alerta por e-mail utilizando as credenciais do .env"""
+    if not EMAIL_CONTA or not EMAIL_SENHA or not EMAIL_DESTINO:
+        return
+
+    msg = EmailMessage()
+    msg.set_content(corpo)
+    msg['Subject'] = assunto
+    msg['From'] = EMAIL_CONTA
+    msg['To'] = EMAIL_DESTINO
+
+    try:
+        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
+            smtp.login(EMAIL_CONTA, EMAIL_SENHA)
+            smtp.send_message(msg)
+    except Exception as e:
+        # Erros de email não devem travar o bot
+        print(f"Erro ao enviar e-mail: {e}")
+
+# --- Classe Telegram Bidirecional ---
 class TelegramBot:
     def __init__(self):
         self.token = TELEGRAM_TOKEN
@@ -42,6 +68,7 @@ class TelegramBot:
         except Exception as e: print(f"Erro Telegram Photo: {e}")
 
     def get_updates(self):
+        """Busca novos comandos no chat"""
         if not self.token: return []
         url = f"https://api.telegram.org/bot{self.token}/getUpdates"
         params = {"offset": self.offset, "timeout": 1}

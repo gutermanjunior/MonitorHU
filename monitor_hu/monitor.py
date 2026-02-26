@@ -11,7 +11,9 @@ from dotenv import load_dotenv
 
 # Imports locais
 from .parser import HUParser
-from .notifier import TelegramBot
+from .notifier import TelegramBot, send_email
+from .logger import get_logger
+
 try:
     from . import state
     from . import scheduler
@@ -27,6 +29,12 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
 CSV_FILE = DATA_DIR / "history.csv"
 
+# Inicia o logger para o módulo Monitor
+log = get_logger("Monitor")
+
+# Garante que a pasta de dados exista
+DATA_DIR.mkdir(exist_ok=True)
+
 class MonitorService:
     def __init__(self):
         self.bot = TelegramBot()
@@ -37,11 +45,10 @@ class MonitorService:
         self.recent_history = []
         
         # Modo Sniper (Alvos)
-        self.alvos = [] # Ex: ["CARDIOLOGIA", "DERMATO"]
+        self.alvos = []
         self.blacklist = ["PEDIATRIA", "ODONTOLOGIA"]
 
     def _log_to_csv(self, evento, especialidade):
-        """Salva no CSV para gerar relatórios futuros"""
         file_exists = CSV_FILE.exists()
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         try:
@@ -51,16 +58,14 @@ class MonitorService:
                     writer.writerow(["Data_Hora", "Evento", "Especialidade"])
                 writer.writerow([timestamp, evento, especialidade])
         except Exception as e:
-            print(f"Erro CSV: {e}")
+            log.error(f"Falha ao escrever no history.csv: {e}")
 
     def _gerar_grafico(self):
-        """Gera gráfico de barras com horários de pico"""
         try:
             if not CSV_FILE.exists(): return None
             df = pd.read_csv(CSV_FILE)
             df['Data_Hora'] = pd.to_datetime(df['Data_Hora'])
             
-            # Filtra apenas adições
             df_adds = df[df['Evento'] == 'added']
             if len(df_adds) == 0: return "VAZIO"
 
@@ -77,8 +82,10 @@ class MonitorService:
             img_path = DATA_DIR / "relatorio_temp.png"
             plt.savefig(img_path)
             plt.close()
+            log.info("Gráfico de relatório gerado com sucesso.")
             return str(img_path)
-        except Exception:
+        except Exception as e:
+            log.error(f"Erro ao gerar gráfico: {e}")
             return None
 
     def _add_history(self, event_type, item):
@@ -108,10 +115,11 @@ class MonitorService:
             print(f"║ VAGAS DETECTADAS ({count})                                 ║")
             lista = sorted(list(self.vagas_atuais))
             for v in lista[:5]:
-                nome_display = (v[:45] + '..') if len(v) > 45 else v
+                nome_display = (v[:43] + '..') if len(v) > 43 else v
                 print(f"║ • {nome_display:<46} ║")
             if len(lista) > 5:
-                print(f"║ ... e mais {len(lista)-5} ...                                ║")
+                restantes = len(lista) - 5
+                print(f"║ ... e mais {restantes:<35} ║")
         else:
             print("║ NENHUMA VAGA DISPONÍVEL NO MOMENTO                 ║")
             
@@ -126,14 +134,14 @@ class MonitorService:
         print("╚════════════════════════════════════════════════════╝")
         
         if next_check > 0:
-            print(f"\n💤 Próx: {next_check}min (Comandos ativos...)")
+            print(f"\n💤 Próxima verificação em {next_check} minutos (Comandos ativos...)")
         elif status.startswith("⏸️"):
-            print("\n⏸️ PAUSADO. Aguardando /resume...")
+            print("\n⏸️ Monitoramento PAUSADO. Aguardando comando /resume...")
 
     def handle_commands(self):
-        """Central de Comandos do Telegram"""
         comandos = self.bot.get_updates()
         for full_cmd in comandos:
+            log.info(f"Comando recebido: {full_cmd}")
             parts = full_cmd.split()
             cmd = parts[0].lower()
             args = parts[1:] if len(parts) > 1 else []
@@ -179,11 +187,13 @@ class MonitorService:
                 self.paused = True
                 self.bot.send("⏸️ Pausado.")
                 self._render_dashboard(status="⏸️ PAUSADO")
+                log.info("Operação pausada pelo usuário.")
 
             elif cmd == "/resume":
                 self.paused = False
                 self.bot.send("▶️ Retomado.")
                 self._render_dashboard(status="✅ Retomando...")
+                log.info("Operação retomada pelo usuário.")
 
             elif cmd == "/alvos":
                 if not self.alvos: self.bot.send("🌐 Modo GERAL (Monitorando tudo exceto blacklist)")
@@ -195,6 +205,7 @@ class MonitorService:
                     if novo not in self.alvos:
                         self.alvos.append(novo)
                         self.bot.send(f"✅ Alvo adicionado: {novo}")
+                        log.info(f"Alvo adicionado: {novo}")
                 else: self.bot.send("⚠️ Use: /add NOME")
 
             elif cmd == "/remove":
@@ -202,6 +213,7 @@ class MonitorService:
                     nome = " ".join(args).upper()
                     self.alvos = [a for a in self.alvos if nome not in a]
                     self.bot.send(f"🗑️ Removido: {nome}")
+                    log.info(f"Alvo removido: {nome}")
                 else: self.bot.send("⚠️ Use: /remove NOME")
             
             elif cmd == "/help":
@@ -234,9 +246,10 @@ class MonitorService:
             time.sleep(1)
 
     def run(self):
+        log.info("=== Iniciando MonitorService v2.6 ===")
         self._clear_screen()
-        print("🚀 Monitor HU (v2.4 - Full Commands)")
-        try: self.bot.send("🚀 Monitor Iniciado (v2.4)")
+        print("🚀 Monitor HU (v2.6 - Application Logging)")
+        try: self.bot.send("🚀 Monitor Iniciado (v2.6)")
         except: pass
         
         try:
@@ -253,7 +266,8 @@ class MonitorService:
                 try:
                     self.parser.driver.refresh()
                     self.vagas_atuais = self.parser.get_dropdown_options()
-                except:
+                except Exception as e:
+                    log.warning(f"Erro na verificação, tentando restaurar: {e}")
                     self.parser.ensure_logged()
                     self.vagas_atuais = self.parser.get_dropdown_options()
 
@@ -263,21 +277,27 @@ class MonitorService:
                 novas = self.vagas_atuais - vagas_anteriores
                 removidas = vagas_anteriores - self.vagas_atuais
 
-                # --- FILTRO SNIPER ---
                 if self.alvos:
                     novas_relevantes = {v for v in novas if any(alvo in v.upper() for alvo in self.alvos)}
                 else:
                     novas_relevantes = {v for v in novas if v not in self.blacklist}
 
                 if novas_relevantes:
+                    log.info(f"VAGAS ENCONTRADAS: {novas_relevantes}")
+                    
                     msg_tg = "🟢 <b>NOVAS VAGAS:</b>\n" + "\n".join(f"• {n}" for n in novas_relevantes)
                     self.bot.send(msg_tg)
+                    
+                    msg_email = "O Monitor HU encontrou as seguintes vagas disponíveis:\n\n" + "\n".join(f"- {n}" for n in novas_relevantes)
+                    send_email("Monitor HU: Novas Vagas Abertas!", msg_email)
+
                     for n in novas_relevantes:
                         self._add_history("added", f"{n} abriu")
                 
-                # Registra no CSV para o /relatorio
                 for n in novas: self._log_to_csv("added", n)
-                for r in removidas: self._log_to_csv("removed", r)
+                for r in removidas: 
+                    self._log_to_csv("removed", r)
+                    log.info(f"VAGA ENCERRADA: {r}")
 
                 if removidas:
                     for r in removidas: self._add_history("removed", f"{r} fechou")
@@ -287,18 +307,23 @@ class MonitorService:
                 
                 minutos = scheduler.get_interval_minutes()
                 self._render_dashboard(status="✅ Conectado", next_check=minutos)
+                
+                log.info(f"Check finalizado ({len(self.vagas_atuais)} vagas visíveis). Dormindo por {minutos} minutos.")
                 self.smart_sleep(minutos)
 
         except KeyboardInterrupt:
+            log.info("Execução interrompida manualmente pelo usuário.")
             print("\nParando...")
             try: self.bot.send("🛑 Desligado manualmente.")
             except: pass
-        except Exception:
+        except Exception as e:
+            log.error("ERRO FATAL NA EXECUÇÃO DO MONITOR", exc_info=True)
             error_trace = traceback.format_exc()
             try: self.bot.send(f"🔴 ERRO FATAL:\n<pre>{error_trace}</pre>")
             except: pass
             raise
         finally:
+            log.info("Encerrando ciclo principal do MonitorService.")
             if self.parser: self.parser.close()
 
 def main():

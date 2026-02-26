@@ -9,19 +9,22 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
 
-# Caminhos organizados (Salva cookies na pasta data/)
+from .logger import get_logger
+
+# Caminhos organizados
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
 DATA_DIR.mkdir(exist_ok=True)
 COOKIES_FILE = DATA_DIR / "hu_cookies.pkl"
 URL = "https://sistemashu.hu.usp.br/reshu/paciente"
 
+log = get_logger("Parser")
 
 class HUParser:
-
     def __init__(self, HU_USER, HU_DATA):
         self.HU_USER = HU_USER
         self.HU_DATA = HU_DATA
+        log.info("Inicializando WebDriver...")
         self.driver = self._init_driver()
 
     def _init_driver(self):
@@ -31,14 +34,18 @@ class HUParser:
         options.add_argument("--disable-web-security")
         options.add_argument("--allow-running-insecure-content")
         options.add_argument("--log-level=3")
-        
-        # Disfarça o bot
         options.add_argument("--disable-blink-features=AutomationControlled")
         options.add_experimental_option("excludeSwitches", ["enable-automation"])
         options.add_experimental_option('useAutomationExtension', False)
 
-        service = Service(ChromeDriverManager().install())
-        return webdriver.Chrome(service=service, options=options)
+        try:
+            service = Service(ChromeDriverManager().install())
+            driver = webdriver.Chrome(service=service, options=options)
+            log.info("WebDriver iniciado com sucesso.")
+            return driver
+        except Exception as e:
+            log.error(f"Falha crítica ao iniciar WebDriver: {e}")
+            raise
 
     def open(self):
         self.driver.get(URL)
@@ -51,8 +58,10 @@ class HUParser:
                     for cookie in cookies:
                         self.driver.add_cookie(cookie)
                 self.driver.refresh()
+                log.info("Cookies carregados. Tentando restaurar sessão...")
                 return True
-            except Exception:
+            except Exception as e:
+                log.warning(f"Erro ao ler arquivo de cookies: {e}")
                 return False
         return False
 
@@ -60,38 +69,25 @@ class HUParser:
         try:
             with open(COOKIES_FILE, "wb") as f:
                 pickle.dump(self.driver.get_cookies(), f)
-        except Exception:
-            pass
+            log.info("Sessão salva em cookies (hu_cookies.pkl).")
+        except Exception as e:
+            log.error(f"Erro ao salvar cookies: {e}")
 
     def manual_login(self):
+        log.info("Iniciando processo de login manual (automação do form).")
         wait = WebDriverWait(self.driver, 15)
 
         print("Aguardando formulário...")
-        
-        # 1. Matrícula (Campo simples, digitação normal funciona)
-        matricula = wait.until(
-            EC.element_to_be_clickable((By.ID, "PacienteMatricula"))
-        )
+        matricula = wait.until(EC.element_to_be_clickable((By.ID, "PacienteMatricula")))
         matricula.clear()
         matricula.send_keys(self.HU_USER)
 
-        # 2. Data de Nascimento (Campo com máscara problemática)
-        # SOLUÇÃO DEFINITIVA: Injeção direta via JavaScript
         print("Preenchendo data via injeção JavaScript...")
-        data_field = wait.until(
-            EC.presence_of_element_located((By.ID, "PacienteDataNascimento"))
-        )
+        data_field = wait.until(EC.presence_of_element_located((By.ID, "PacienteDataNascimento")))
         
-        # O script abaixo define o valor e dispara os eventos que o site espera
-        # para validar o campo (input, change, blur)
         js_script = """
-            var el = arguments[0];
-            var val = arguments[1];
-            
-            // Define o valor diretamente
+            var el = arguments[0]; var val = arguments[1];
             el.value = val;
-            
-            // Simula os eventos de interação humana para enganar a validação
             el.dispatchEvent(new Event('input', { bubbles: true }));
             el.dispatchEvent(new Event('change', { bubbles: true }));
             el.dispatchEvent(new Event('blur', { bubbles: true }));
@@ -99,17 +95,18 @@ class HUParser:
         self.driver.execute_script(js_script, data_field, self.HU_DATA)
 
         print("🔐 Resolva o CAPTCHA manualmente no navegador.")
-        print("Aguardando login ser concluído...")
+        log.info("Formulário preenchido. Aguardando resolução do CAPTCHA pelo usuário.")
         
         try:
-            # Espera até 5 minutos (300s) pelo usuário logar
             WebDriverWait(self.driver, 300).until(
                 EC.presence_of_element_located((By.ID, "Especialidade"))
             )
             print("Login detectado!")
+            log.info("Login realizado com sucesso! Dropdown detectado.")
             self.save_cookies()
-        except:
+        except Exception as e:
             print("Tempo esgotado para login.")
+            log.error(f"Timeout de 5 minutos aguardando login manual/CAPTCHA. Erro: {e}")
 
     def ensure_logged(self):
         self.open()
@@ -119,21 +116,18 @@ class HUParser:
                 WebDriverWait(self.driver, 5).until(
                     EC.presence_of_element_located((By.ID, "Especialidade"))
                 )
+                log.info("Sessão restaurada com sucesso via Cookies.")
                 return
             except:
-                pass
+                log.warning("Cookies expiraram ou foram invalidados pelo servidor.")
 
         print("Necessário login manual.")
         self.manual_login()
 
     def get_dropdown_options(self):
-        """Lê as opções disponíveis no Dropdown de especialidades"""
         try:
             wait = WebDriverWait(self.driver, 10)
-            select_elem = wait.until(
-                EC.presence_of_element_located((By.ID, "Especialidade"))
-            )
-            
+            select_elem = wait.until(EC.presence_of_element_located((By.ID, "Especialidade")))
             options = select_elem.find_elements(By.TAG_NAME, "option")
             
             results = set()
@@ -145,14 +139,12 @@ class HUParser:
                     results.add(text)
             
             return results
-            
-        except Exception:
+        except Exception as e:
+            log.warning(f"Erro ao extrair opções do dropdown: {e}")
             return set()
 
     def take_screenshot(self, filename="screenshot.png"):
-        """Tira um print da tela e salva no disco"""
         try:
-            # Tenta expandir o dropdown para ver as opções no print
             try:
                 dropdown = self.driver.find_element(By.ID, "Especialidade")
                 dropdown.click()
@@ -161,10 +153,13 @@ class HUParser:
 
             path = DATA_DIR / filename
             self.driver.save_screenshot(str(path))
+            log.info(f"Screenshot gerado: {filename}")
             return str(path)
         except Exception as e:
-            print(f"Erro ao tirar print: {e}")
+            log.error(f"Erro ao gerar screenshot: {e}")
             return None
 
     def close(self):
-        self.driver.quit()
+        log.info("Encerrando WebDriver.")
+        try: self.driver.quit()
+        except: pass
