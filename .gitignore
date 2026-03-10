@@ -5,6 +5,7 @@
 .envrc
 *.bak
 hu_cookies.pkl
+last_snapshot.json
 
 # ==========================================
 # 2. PYTHON: CACHE E COMPILADOS
@@ -223,4 +224,3 @@ pip-delete-this-directory.txt
 
 # Local Project Files
 old/
-data/
