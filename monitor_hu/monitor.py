@@ -1,3 +1,34 @@
+"""
+===============================================================================
+Projeto: Monitor HU-USP (Especialidades)
+Arquivo: monitor.py
+Autor: Guterman (guterman.com.br)
+Versão: 2.9 (Ultimate Edition)
+Última Atualização: 26 de Março de 2026
+===============================================================================
+
+Descrição:
+    Sistema de automação e monitoramento contínuo para detectar a disponibilidade 
+    de vagas em especialidades médicas no Hospital Universitário da USP. 
+
+    Este módulo atua como o núcleo (core) da aplicação, orquestrando:
+    - O controle da automação web integrada (via Selenium/HUParser).
+    - A renderização da interface de texto (TUI) utilizando a biblioteca Rich.
+    - O gerenciamento de estado (Silent Baseline) e persistência de dados (CSV/JSON).
+    - O envio de notificações multicanal (Telegram, E-mail, e Beep do Sistema).
+    - A recepção e processamento de comandos remotos via Telegram 
+      (/status, /pause, /resume, /alvos, /relatorio, /print, etc).
+
+Dependências Principais (requirements.txt):
+    - rich, selenium, webdriver-manager, pandas, matplotlib, python-dotenv, requests
+
+Uso:
+    Execute este arquivo diretamente ou através do sentinela (guardian):
+    $ python -m monitor_hu.monitor
+    $ python -m monitor_hu.guardian
+===============================================================================
+"""
+
 import os
 import time
 import sys
