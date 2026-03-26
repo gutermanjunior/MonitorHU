@@ -9,11 +9,17 @@ from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
 
+# Importações da TUI e Logs
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich.text import Text
+from rich import box
+from .logger import get_logger
+
 # Imports locais
 from .parser import HUParser
 from .notifier import TelegramBot, send_email
-from .logger import get_logger
-
 try:
     from . import state
     from . import scheduler
@@ -29,11 +35,9 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
 CSV_FILE = DATA_DIR / "history.csv"
 
-# Inicia o logger para o módulo Monitor
-log = get_logger("Monitor")
-
-# Garante que a pasta de dados exista
 DATA_DIR.mkdir(exist_ok=True)
+console = Console()
+log = get_logger("Monitor")
 
 class MonitorService:
     def __init__(self):
@@ -43,8 +47,6 @@ class MonitorService:
         self.vagas_atuais = set()
         self.inicio_sessao = datetime.now()
         self.recent_history = []
-        
-        # Modo Sniper (Alvos)
         self.alvos = []
         self.blacklist = ["PEDIATRIA", "ODONTOLOGIA"]
 
@@ -57,15 +59,13 @@ class MonitorService:
                 if not file_exists:
                     writer.writerow(["Data_Hora", "Evento", "Especialidade"])
                 writer.writerow([timestamp, evento, especialidade])
-        except Exception as e:
-            log.error(f"Falha ao escrever no history.csv: {e}")
+        except Exception: pass
 
     def _gerar_grafico(self):
         try:
             if not CSV_FILE.exists(): return None
             df = pd.read_csv(CSV_FILE)
             df['Data_Hora'] = pd.to_datetime(df['Data_Hora'])
-            
             df_adds = df[df['Evento'] == 'added']
             if len(df_adds) == 0: return "VAZIO"
 
@@ -82,18 +82,17 @@ class MonitorService:
             img_path = DATA_DIR / "relatorio_temp.png"
             plt.savefig(img_path)
             plt.close()
-            log.info("Gráfico de relatório gerado com sucesso.")
             return str(img_path)
-        except Exception as e:
-            log.error(f"Erro ao gerar gráfico: {e}")
-            return None
+        except Exception: return None
 
     def _add_history(self, event_type, item):
         timestamp = datetime.now().strftime("%d/%m %H:%M")
-        msg = f"{timestamp}: {item}"
-        icon = "🟢" if event_type == "added" else "🔴"
-        self.recent_history.insert(0, (icon, msg))
-        if len(self.recent_history) > 5: self.recent_history.pop()
+        if event_type == "added": icon = "[bold green]🟢[/bold green]"
+        elif event_type == "removed": icon = "[bold red]🔴[/bold red]"
+        else: icon = "[bold blue]ℹ️[/bold blue]"
+            
+        self.recent_history.insert(0, f"{icon} {timestamp}: {item}")
+        if len(self.recent_history) > 6: self.recent_history.pop()
 
     def _clear_screen(self):
         os.system('cls' if os.name == 'nt' else 'clear')
@@ -104,39 +103,37 @@ class MonitorService:
         count = len(self.vagas_atuais)
         mode = f"🎯 SNIPER ({len(self.alvos)})" if self.alvos else "🌐 GERAL"
         
-        print("╔════════════════════════════════════════════════════╗")
-        print("║  MONITOR HU-USP – Especialidades                   ║")
-        print("╠════════════════════════════════════════════════════╣")
-        print(f"║ Última verificação: {now_str:<30} ║")
-        print(f"║ Status: {status:<18} Modo: {mode:<13} ║")
-        print("╠════════════════════════════════════════════════════╣")
-        
+        header_table = Table(box=None, show_header=False, expand=True)
+        header_table.add_column("Key", style="bold cyan")
+        header_table.add_column("Value")
+        header_table.add_row("Última verificação:", now_str)
+        header_table.add_row("Status:", status)
+        header_table.add_row("Modo:", mode)
+
         if count > 0:
-            print(f"║ VAGAS DETECTADAS ({count})                                 ║")
+            vagas_text = Text()
             lista = sorted(list(self.vagas_atuais))
-            for v in lista[:5]:
-                nome_display = (v[:43] + '..') if len(v) > 43 else v
-                print(f"║ • {nome_display:<46} ║")
-            if len(lista) > 5:
-                restantes = len(lista) - 5
-                print(f"║ ... e mais {restantes:<35} ║")
+            for v in lista[:8]: vagas_text.append(f"• {v}\n", style="bold white")
+            if len(lista) > 8: vagas_text.append(f"... e mais {len(lista)-8} vagas", style="dim italic")
+            p_vagas = Panel(vagas_text, title=f"[bold green]VAGAS DETECTADAS ({count})[/bold green]", border_style="green", box=box.ROUNDED)
         else:
-            print("║ NENHUMA VAGA DISPONÍVEL NO MOMENTO                 ║")
-            
-        print("╠════════════════════════════════════════════════════╣")
-        print("║ Histórico recente                                  ║")
+            p_vagas = Panel("[dim]Nenhuma vaga disponível no momento.[/dim]", title="[bold yellow]VAGAS DETECTADAS (0)[/bold yellow]", border_style="yellow", box=box.ROUNDED)
+
         if self.recent_history:
-            for icon, txt in self.recent_history:
-                txt_display = (txt[:43] + '..') if len(txt) > 43 else txt
-                print(f"║ {icon} {txt_display:<44} ║")
+            hist_text = Text.from_markup("\n".join(self.recent_history))
         else:
-            print("║ - Nenhuma alteração registrada ainda               ║")
-        print("╚════════════════════════════════════════════════════╝")
+            hist_text = Text("- Nenhuma alteração registrada ainda", style="dim")
+            
+        p_hist = Panel(hist_text, title="[bold blue]Histórico Recente[/bold blue]", border_style="blue", box=box.ROUNDED)
+
+        console.print(Panel(header_table, title="[bold magenta]🏥 MONITOR HU-USP – Especialidades[/bold magenta]", border_style="magenta", box=box.HEAVY))
+        console.print(p_vagas)
+        console.print(p_hist)
         
         if next_check > 0:
-            print(f"\n💤 Próxima verificação em {next_check} minutos (Comandos ativos...)")
-        elif status.startswith("⏸️"):
-            print("\n⏸️ Monitoramento PAUSADO. Aguardando comando /resume...")
+            console.print(f"\n[cyan]💤 Próxima verificação em {next_check} minutos (Comandos ativos via Telegram...)[/cyan]")
+        elif "PAUSADO" in status:
+            console.print("\n[yellow]⏸️ Monitoramento PAUSADO. Aguardando /resume no Telegram...[/yellow]")
 
     def handle_commands(self):
         comandos = self.bot.get_updates()
@@ -146,33 +143,22 @@ class MonitorService:
             cmd = parts[0].lower()
             args = parts[1:] if len(parts) > 1 else []
             
-            if cmd == "/ping":
-                self.bot.send("🏓 Pong!")
-            
+            if cmd == "/ping": self.bot.send("🏓 Pong!")
             elif cmd == "/status":
                 tempo = str(datetime.now() - self.inicio_sessao).split('.')[0]
-                mode = f"🎯 SNIPER ({len(self.alvos)})" if self.alvos else "🌐 GERAL"
-                msg = (f"<b>STATUS MONITOR</b>\n"
-                       f"⏱️ Uptime: {tempo}\n"
-                       f"🛠️ Modo: {mode}\n"
-                       f"🔎 Vagas Visíveis: {len(self.vagas_atuais)}")
+                msg = f"<b>STATUS MONITOR</b>\n⏱️ Uptime: {tempo}\n🔎 Vagas Visíveis: {len(self.vagas_atuais)}"
                 self.bot.send(msg)
-
             elif cmd == "/list":
                 if not self.vagas_atuais: self.bot.send("ℹ️ Lista vazia.")
-                else:
-                    msg = "📋 <b>VAGAS ATUAIS:</b>\n\n" + "\n".join(f"• {v}" for v in sorted(self.vagas_atuais))
-                    self.bot.send(msg)
-
+                else: self.bot.send("📋 <b>VAGAS ATUAIS:</b>\n" + "\n".join(f"• {v}" for v in sorted(self.vagas_atuais)))
             elif cmd == "/print":
                 self.bot.send("📸 Tirando print...")
                 path = self.parser.take_screenshot("cmd_print.png")
                 if path:
-                    self.bot.send_photo("📸 Screenshot Atual", path)
+                    self.bot.send_photo("📸 Screenshot", path)
                     try: os.remove(path)
                     except: pass
                 else: self.bot.send("❌ Erro ao tirar print.")
-
             elif cmd == "/relatorio":
                 self.bot.send("📊 Gerando gráfico...")
                 path = self._gerar_grafico()
@@ -182,59 +168,37 @@ class MonitorService:
                     try: os.remove(path)
                     except: pass
                 else: self.bot.send("❌ Erro ou sem arquivo CSV.")
-
             elif cmd == "/pause":
                 self.paused = True
                 self.bot.send("⏸️ Pausado.")
-                self._render_dashboard(status="⏸️ PAUSADO")
-                log.info("Operação pausada pelo usuário.")
-
+                self._render_dashboard(status="[bold yellow]⏸️ PAUSADO[/bold yellow]")
             elif cmd == "/resume":
                 self.paused = False
                 self.bot.send("▶️ Retomado.")
-                self._render_dashboard(status="✅ Retomando...")
-                log.info("Operação retomada pelo usuário.")
-
+                self._render_dashboard(status="[bold green]✅ Retomando...[/bold green]")
             elif cmd == "/alvos":
-                if not self.alvos: self.bot.send("🌐 Modo GERAL (Monitorando tudo exceto blacklist)")
+                if not self.alvos: self.bot.send("🌐 Modo GERAL")
                 else: self.bot.send(f"🎯 <b>ALVOS ATUAIS:</b>\n" + "\n".join(self.alvos))
-
             elif cmd == "/add":
                 if args:
                     novo = " ".join(args).upper()
                     if novo not in self.alvos:
                         self.alvos.append(novo)
                         self.bot.send(f"✅ Alvo adicionado: {novo}")
-                        log.info(f"Alvo adicionado: {novo}")
                 else: self.bot.send("⚠️ Use: /add NOME")
-
             elif cmd == "/remove":
                 if args:
                     nome = " ".join(args).upper()
                     self.alvos = [a for a in self.alvos if nome not in a]
                     self.bot.send(f"🗑️ Removido: {nome}")
-                    log.info(f"Alvo removido: {nome}")
                 else: self.bot.send("⚠️ Use: /remove NOME")
-            
             elif cmd == "/help":
-                help_txt = (
-                    "🤖 <b>COMANDOS:</b>\n"
-                    "/status - Estado do bot\n"
-                    "/list - Ver vagas atuais\n"
-                    "/print - Foto da tela\n"
-                    "/relatorio - Gráfico de horários\n"
-                    "/add [NOME] - Adicionar alvo\n"
-                    "/remove [NOME] - Remover alvo\n"
-                    "/alvos - Ver lista de alvos\n"
-                    "/pause - Pausar\n"
-                    "/resume - Retomar"
-                )
-                self.bot.send(help_txt)
+                self.bot.send("🤖 <b>COMANDOS:</b>\n/status\n/list\n/print\n/relatorio\n/add [NOME]\n/remove [NOME]\n/alvos\n/pause\n/resume")
 
     def smart_sleep(self, minutes):
         seconds = minutes * 60
         if self.paused:
-            self._render_dashboard(status="⏸️ PAUSADO")
+            self._render_dashboard(status="[bold yellow]⏸️ PAUSADO[/bold yellow]")
             while self.paused:
                 self.handle_commands()
                 time.sleep(2)
@@ -246,12 +210,13 @@ class MonitorService:
             time.sleep(1)
 
     def run(self):
-        log.info("=== Iniciando MonitorService v2.6 ===")
+        log.info("=== Iniciando MonitorService v2.9 ===")
         self._clear_screen()
-        print("🚀 Monitor HU (v2.6 - Application Logging)")
-        try: self.bot.send("🚀 Monitor Iniciado (v2.6)")
-        except: pass
+        console.print("[bold green]🚀 Monitor HU (v2.9 - Ultimate Edition)[/bold green]")
         
+        try: self.bot.send("🚀 Monitor Iniciado (v2.9)")
+        except: pass
+
         try:
             self.parser = HUParser(HU_USER, HU_DATA)
             self.parser.ensure_logged()
@@ -266,64 +231,64 @@ class MonitorService:
                 try:
                     self.parser.driver.refresh()
                     self.vagas_atuais = self.parser.get_dropdown_options()
-                except Exception as e:
-                    log.warning(f"Erro na verificação, tentando restaurar: {e}")
+                except:
                     self.parser.ensure_logged()
                     self.vagas_atuais = self.parser.get_dropdown_options()
 
+                # --- LÓGICA DE ESTADO ---
                 snapshot = state.load_snapshot()
                 vagas_anteriores = set(snapshot.get("especialidades", []))
+                is_first_run = snapshot.get("is_first_run", False)
                 
                 novas = self.vagas_atuais - vagas_anteriores
                 removidas = vagas_anteriores - self.vagas_atuais
 
-                if self.alvos:
-                    novas_relevantes = {v for v in novas if any(alvo in v.upper() for alvo in self.alvos)}
-                else:
-                    novas_relevantes = {v for v in novas if v not in self.blacklist}
-
-                if novas_relevantes:
-                    log.info(f"VAGAS ENCONTRADAS: {novas_relevantes}")
-                    
-                    msg_tg = "🟢 <b>NOVAS VAGAS:</b>\n" + "\n".join(f"• {n}" for n in novas_relevantes)
-                    self.bot.send(msg_tg)
-                    
-                    msg_email = "O Monitor HU encontrou as seguintes vagas disponíveis:\n\n" + "\n".join(f"- {n}" for n in novas_relevantes)
-                    send_email("Monitor HU: Novas Vagas Abertas!", msg_email)
-
-                    for n in novas_relevantes:
-                        self._add_history("added", f"{n} abriu")
-                
-                for n in novas: self._log_to_csv("added", n)
-                for r in removidas: 
-                    self._log_to_csv("removed", r)
-                    log.info(f"VAGA ENCERRADA: {r}")
-
-                if removidas:
-                    for r in removidas: self._add_history("removed", f"{r} fechou")
-
-                if novas or removidas:
+                if is_first_run:
+                    if self.vagas_atuais:
+                        self._add_history("system", f"Baseline criado: {len(self.vagas_atuais)} especialidades ocultas.")
                     state.save_snapshot(list(self.vagas_atuais))
+                else:
+                    if self.alvos:
+                        novas_relevantes = {v for v in novas if any(alvo in v.upper() for alvo in self.alvos)}
+                    else:
+                        novas_relevantes = {v for v in novas if v not in self.blacklist}
+
+                    if novas_relevantes:
+                        log.info(f"VAGAS ENCONTRADAS: {novas_relevantes}")
+                        
+                        # TELEGRAM
+                        msg_tg = "🟢 <b>NOVAS VAGAS:</b>\n" + "\n".join(f"• {n}" for n in novas_relevantes)
+                        self.bot.send(msg_tg)
+                        
+                        # E-MAIL
+                        msg_email = "O Monitor HU encontrou as seguintes vagas:\n\n" + "\n".join(f"- {n}" for n in novas_relevantes)
+                        send_email("Monitor HU: Novas Vagas!", msg_email)
+
+                        # HISTÓRICO E BEEP
+                        for n in novas_relevantes:
+                            self._add_history("added", f"{n} abriu")
+                            
+                        sys.stdout.write('\a')
+                        sys.stdout.flush()
+                    
+                    for n in novas: self._log_to_csv("added", n)
+                    for r in removidas: 
+                        self._log_to_csv("removed", r)
+                        self._add_history("removed", f"{r} fechou")
+
+                    if novas or removidas:
+                        state.save_snapshot(list(self.vagas_atuais))
                 
                 minutos = scheduler.get_interval_minutes()
-                self._render_dashboard(status="✅ Conectado", next_check=minutos)
-                
-                log.info(f"Check finalizado ({len(self.vagas_atuais)} vagas visíveis). Dormindo por {minutos} minutos.")
+                self._render_dashboard(status="[bold green]✅ Conectado[/bold green]", next_check=minutos)
                 self.smart_sleep(minutos)
 
         except KeyboardInterrupt:
-            log.info("Execução interrompida manualmente pelo usuário.")
-            print("\nParando...")
-            try: self.bot.send("🛑 Desligado manualmente.")
-            except: pass
-        except Exception as e:
-            log.error("ERRO FATAL NA EXECUÇÃO DO MONITOR", exc_info=True)
-            error_trace = traceback.format_exc()
-            try: self.bot.send(f"🔴 ERRO FATAL:\n<pre>{error_trace}</pre>")
-            except: pass
+            console.print("\n[bold red]Parando...[/bold red]")
+        except Exception:
+            console.print_exception()
             raise
         finally:
-            log.info("Encerrando ciclo principal do MonitorService.")
             if self.parser: self.parser.close()
 
 def main():

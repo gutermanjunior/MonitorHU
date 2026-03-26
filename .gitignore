@@ -6,6 +6,7 @@
 *.bak
 hu_cookies.pkl
 last_snapshot.json
+data/heartbeat.json
 
 # ==========================================
 # 2. PYTHON: CACHE E COMPILADOS

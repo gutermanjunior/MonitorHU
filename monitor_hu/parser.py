@@ -11,7 +11,6 @@ from webdriver_manager.chrome import ChromeDriverManager
 
 from .logger import get_logger
 
-# Caminhos organizados
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
 DATA_DIR.mkdir(exist_ok=True)
@@ -44,7 +43,7 @@ class HUParser:
             log.info("WebDriver iniciado com sucesso.")
             return driver
         except Exception as e:
-            log.error(f"Falha crítica ao iniciar WebDriver: {e}")
+            log.error(f"Falha ao iniciar WebDriver: {e}")
             raise
 
     def open(self):
@@ -58,10 +57,9 @@ class HUParser:
                     for cookie in cookies:
                         self.driver.add_cookie(cookie)
                 self.driver.refresh()
-                log.info("Cookies carregados. Tentando restaurar sessão...")
+                log.info("Cookies carregados.")
                 return True
-            except Exception as e:
-                log.warning(f"Erro ao ler arquivo de cookies: {e}")
+            except Exception:
                 return False
         return False
 
@@ -69,22 +67,20 @@ class HUParser:
         try:
             with open(COOKIES_FILE, "wb") as f:
                 pickle.dump(self.driver.get_cookies(), f)
-            log.info("Sessão salva em cookies (hu_cookies.pkl).")
-        except Exception as e:
-            log.error(f"Erro ao salvar cookies: {e}")
+            log.info("Sessão salva em cookies.")
+        except Exception: pass
 
     def manual_login(self):
-        log.info("Iniciando processo de login manual (automação do form).")
+        log.info("Iniciando login manual.")
         wait = WebDriverWait(self.driver, 15)
-
         print("Aguardando formulário...")
+        
         matricula = wait.until(EC.element_to_be_clickable((By.ID, "PacienteMatricula")))
         matricula.clear()
         matricula.send_keys(self.HU_USER)
 
         print("Preenchendo data via injeção JavaScript...")
         data_field = wait.until(EC.presence_of_element_located((By.ID, "PacienteDataNascimento")))
-        
         js_script = """
             var el = arguments[0]; var val = arguments[1];
             el.value = val;
@@ -95,32 +91,21 @@ class HUParser:
         self.driver.execute_script(js_script, data_field, self.HU_DATA)
 
         print("🔐 Resolva o CAPTCHA manualmente no navegador.")
-        log.info("Formulário preenchido. Aguardando resolução do CAPTCHA pelo usuário.")
-        
         try:
-            WebDriverWait(self.driver, 300).until(
-                EC.presence_of_element_located((By.ID, "Especialidade"))
-            )
+            WebDriverWait(self.driver, 300).until(EC.presence_of_element_located((By.ID, "Especialidade")))
             print("Login detectado!")
-            log.info("Login realizado com sucesso! Dropdown detectado.")
             self.save_cookies()
         except Exception as e:
-            print("Tempo esgotado para login.")
-            log.error(f"Timeout de 5 minutos aguardando login manual/CAPTCHA. Erro: {e}")
+            log.error("Tempo esgotado para login.")
 
     def ensure_logged(self):
         self.open()
-
         if self.load_cookies():
             try:
-                WebDriverWait(self.driver, 5).until(
-                    EC.presence_of_element_located((By.ID, "Especialidade"))
-                )
-                log.info("Sessão restaurada com sucesso via Cookies.")
+                WebDriverWait(self.driver, 5).until(EC.presence_of_element_located((By.ID, "Especialidade")))
+                log.info("Sessão restaurada com sucesso.")
                 return
-            except:
-                log.warning("Cookies expiraram ou foram invalidados pelo servidor.")
-
+            except: pass
         print("Necessário login manual.")
         self.manual_login()
 
@@ -129,37 +114,23 @@ class HUParser:
             wait = WebDriverWait(self.driver, 10)
             select_elem = wait.until(EC.presence_of_element_located((By.ID, "Especialidade")))
             options = select_elem.find_elements(By.TAG_NAME, "option")
-            
-            results = set()
-            ignore_list = {"Selecione a Especialidade...", "", "Selecione..."}
-            
-            for opt in options:
-                text = opt.text.strip()
-                if text and text not in ignore_list:
-                    results.add(text)
-            
+            results = {opt.text.strip() for opt in options if opt.text.strip() not in {"Selecione a Especialidade...", "", "Selecione..."}}
             return results
-        except Exception as e:
-            log.warning(f"Erro ao extrair opções do dropdown: {e}")
+        except Exception:
             return set()
 
     def take_screenshot(self, filename="screenshot.png"):
         try:
             try:
-                dropdown = self.driver.find_element(By.ID, "Especialidade")
-                dropdown.click()
+                self.driver.find_element(By.ID, "Especialidade").click()
                 time.sleep(0.5)
             except: pass
-
             path = DATA_DIR / filename
             self.driver.save_screenshot(str(path))
-            log.info(f"Screenshot gerado: {filename}")
             return str(path)
-        except Exception as e:
-            log.error(f"Erro ao gerar screenshot: {e}")
+        except Exception:
             return None
 
     def close(self):
-        log.info("Encerrando WebDriver.")
         try: self.driver.quit()
         except: pass
