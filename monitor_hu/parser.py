@@ -37,6 +37,13 @@ class HUParser:
         options.add_experimental_option("excludeSwitches", ["enable-automation"])
         options.add_experimental_option('useAutomationExtension', False)
 
+        # Define o tamanho da janela (L x A) - 1080x624 é um retângulo vertical ótimo
+        options.add_argument("--window-size=1080,624") 
+        
+        # Como o Monitor 3 está à esquerda do principal, usamos um X negativo.
+        # -1000 vai empurrar a janela para dentro do Monitor 3.
+        options.add_argument("--window-position=-1080,0")
+
         try:
             service = Service(ChromeDriverManager().install())
             driver = webdriver.Chrome(service=service, options=options)

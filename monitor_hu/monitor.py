@@ -3,32 +3,26 @@
 Projeto: Monitor HU-USP (Especialidades)
 Arquivo: monitor.py
 Autor: Guterman (guterman.com.br)
-Versão: 2.9 (Ultimate Edition)
-Última Atualização: 26 de Março de 2026
+Versão: 3.1 (Organized & Clean Exit Edition)
+Data: Março de 2026
 ===============================================================================
 
 Descrição:
-    Sistema de automação e monitoramento contínuo para detectar a disponibilidade 
-    de vagas em especialidades médicas no Hospital Universitário da USP. 
+    Sistema autônomo de monitoramento de vagas médicas do Hospital Universitário 
+    da USP com TUI (Interface de Texto) rica e tolerância a falhas.
 
-    Este módulo atua como o núcleo (core) da aplicação, orquestrando:
-    - O controle da automação web integrada (via Selenium/HUParser).
-    - A renderização da interface de texto (TUI) utilizando a biblioteca Rich.
-    - O gerenciamento de estado (Silent Baseline) e persistência de dados (CSV/JSON).
-    - O envio de notificações multicanal (Telegram, E-mail, e Beep do Sistema).
-    - A recepção e processamento de comandos remotos via Telegram 
-      (/status, /pause, /resume, /alvos, /relatorio, /print, etc).
-
-Dependências Principais (requirements.txt):
-    - rich, selenium, webdriver-manager, pandas, matplotlib, python-dotenv, requests
-
-Uso:
-    Execute este arquivo diretamente ou através do sentinela (guardian):
-    $ python -m monitor_hu.monitor
-    $ python -m monitor_hu.guardian
+Estrutura do Código:
+    1. Imports e Configurações
+    2. Gestão de Dados e Arquivos
+    3. Construção da Interface (TUI)
+    4. Comandos e Comunicação (Telegram)
+    5. Motor Principal (Loop de Monitoramento)
 ===============================================================================
 """
 
+# ==============================================================================
+# 1. IMPORTS E CONFIGURAÇÕES INICIAIS
+# ==============================================================================
 import os
 import time
 import sys
@@ -40,15 +34,16 @@ from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Importações da TUI e Logs
-from rich.console import Console
+# Importações da TUI (Rich)
+from rich.console import Console, Group
+from rich.live import Live
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 from rich import box
-from .logger import get_logger
 
 # Imports locais
+from .logger import get_logger
 from .parser import HUParser
 from .notifier import TelegramBot, send_email
 try:
@@ -58,30 +53,43 @@ except ImportError:
     import state
     import scheduler
 
+# Configuração de Ambiente
 load_dotenv()
-
 HU_USER = os.getenv("HU_USER")
 HU_DATA = os.getenv("HU_DATA")
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
 CSV_FILE = DATA_DIR / "history.csv"
-
 DATA_DIR.mkdir(exist_ok=True)
+
+# Habilita suporte ANSI nativo (necessário para o Windows Terminal)
+os.system("")
+
+# Instâncias globais de logging e interface
 console = Console()
 log = get_logger("Monitor")
 
+
 class MonitorService:
     def __init__(self):
+        # Controle de Estado Interno
         self.bot = TelegramBot()
         self.parser = None
         self.paused = False
         self.vagas_atuais = set()
         self.inicio_sessao = datetime.now()
         self.recent_history = []
+        self.live = None
+        
+        # Filtros de Especialidades
         self.alvos = []
         self.blacklist = ["PEDIATRIA", "ODONTOLOGIA"]
 
+    # ==========================================================================
+    # 2. GESTÃO DE DADOS E ARQUIVOS (Log, CSV, Gráficos)
+    # ==========================================================================
     def _log_to_csv(self, evento, especialidade):
+        """Salva adições e remoções no history.csv para análises futuras."""
         file_exists = CSV_FILE.exists()
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         try:
@@ -90,9 +98,11 @@ class MonitorService:
                 if not file_exists:
                     writer.writerow(["Data_Hora", "Evento", "Especialidade"])
                 writer.writerow([timestamp, evento, especialidade])
-        except Exception: pass
+        except Exception:
+            pass
 
     def _gerar_grafico(self):
+        """Lê o history.csv e gera um gráfico de barras com horários de pico."""
         try:
             if not CSV_FILE.exists(): return None
             df = pd.read_csv(CSV_FILE)
@@ -114,9 +124,11 @@ class MonitorService:
             plt.savefig(img_path)
             plt.close()
             return str(img_path)
-        except Exception: return None
+        except Exception: 
+            return None
 
     def _add_history(self, event_type, item):
+        """Adiciona uma nova linha ao painel de 'Histórico Recente' da TUI."""
         timestamp = datetime.now().strftime("%d/%m %H:%M")
         if event_type == "added": icon = "[bold green]🟢[/bold green]"
         elif event_type == "removed": icon = "[bold red]🔴[/bold red]"
@@ -125,22 +137,25 @@ class MonitorService:
         self.recent_history.insert(0, f"{icon} {timestamp}: {item}")
         if len(self.recent_history) > 6: self.recent_history.pop()
 
-    def _clear_screen(self):
-        os.system('cls' if os.name == 'nt' else 'clear')
-
-    def _render_dashboard(self, status="✅ Conectado", next_check=0):
-        self._clear_screen()
+    # ==========================================================================
+    # 3. CONSTRUÇÃO DA INTERFACE (TUI - Rich Layout)
+    # ==========================================================================
+    def _build_layout(self, status="[bold green]✅ Conectado[/bold green]", next_check=0):
+        """Constrói e empacota todos os painéis visuais para o Live renderizar."""
         now_str = datetime.now().strftime("%d/%m %H:%M:%S")
         count = len(self.vagas_atuais)
         mode = f"🎯 SNIPER ({len(self.alvos)})" if self.alvos else "🌐 GERAL"
         
+        # 3.1 Cabeçalho
         header_table = Table(box=None, show_header=False, expand=True)
         header_table.add_column("Key", style="bold cyan")
         header_table.add_column("Value")
         header_table.add_row("Última verificação:", now_str)
         header_table.add_row("Status:", status)
         header_table.add_row("Modo:", mode)
+        p_header = Panel(header_table, title="[bold magenta]🏥 MONITOR HU-USP – Especialidades[/bold magenta]", border_style="magenta", box=box.HEAVY)
 
+        # 3.2 Lista de Vagas Detectadas
         if count > 0:
             vagas_text = Text()
             lista = sorted(list(self.vagas_atuais))
@@ -150,23 +165,27 @@ class MonitorService:
         else:
             p_vagas = Panel("[dim]Nenhuma vaga disponível no momento.[/dim]", title="[bold yellow]VAGAS DETECTADAS (0)[/bold yellow]", border_style="yellow", box=box.ROUNDED)
 
+        # 3.3 Painel de Histórico
         if self.recent_history:
             hist_text = Text.from_markup("\n".join(self.recent_history))
         else:
             hist_text = Text("- Nenhuma alteração registrada ainda", style="dim")
-            
         p_hist = Panel(hist_text, title="[bold blue]Histórico Recente[/bold blue]", border_style="blue", box=box.ROUNDED)
 
-        console.print(Panel(header_table, title="[bold magenta]🏥 MONITOR HU-USP – Especialidades[/bold magenta]", border_style="magenta", box=box.HEAVY))
-        console.print(p_vagas)
-        console.print(p_hist)
-        
+        # 3.4 Rodapé de Status
+        footer_text = ""
         if next_check > 0:
-            console.print(f"\n[cyan]💤 Próxima verificação em {next_check} minutos (Comandos ativos via Telegram...)[/cyan]")
+            footer_text = f"\n[cyan]💤 Próxima verificação em {next_check} minutos (Comandos ativos via Telegram...)[/cyan]"
         elif "PAUSADO" in status:
-            console.print("\n[yellow]⏸️ Monitoramento PAUSADO. Aguardando /resume no Telegram...[/yellow]")
+            footer_text = "\n[yellow]⏸️ Monitoramento PAUSADO. Aguardando /resume no Telegram...[/yellow]"
 
+        return Group(p_header, p_vagas, p_hist, Text.from_markup(footer_text) if footer_text else Text(""))
+
+    # ==========================================================================
+    # 4. COMANDOS E COMUNICAÇÃO (Telegram)
+    # ==========================================================================
     def handle_commands(self):
+        """Lê atualizações do Telegram e executa as ações correspondentes."""
         comandos = self.bot.get_updates()
         for full_cmd in comandos:
             log.info(f"Comando recebido: {full_cmd}")
@@ -174,7 +193,8 @@ class MonitorService:
             cmd = parts[0].lower()
             args = parts[1:] if len(parts) > 1 else []
             
-            if cmd == "/ping": self.bot.send("🏓 Pong!")
+            if cmd == "/ping": 
+                self.bot.send("🏓 Pong!")
             elif cmd == "/status":
                 tempo = str(datetime.now() - self.inicio_sessao).split('.')[0]
                 msg = f"<b>STATUS MONITOR</b>\n⏱️ Uptime: {tempo}\n🔎 Vagas Visíveis: {len(self.vagas_atuais)}"
@@ -202,11 +222,11 @@ class MonitorService:
             elif cmd == "/pause":
                 self.paused = True
                 self.bot.send("⏸️ Pausado.")
-                self._render_dashboard(status="[bold yellow]⏸️ PAUSADO[/bold yellow]")
+                if self.live: self.live.update(self._build_layout(status="[bold yellow]⏸️ PAUSADO[/bold yellow]"))
             elif cmd == "/resume":
                 self.paused = False
                 self.bot.send("▶️ Retomado.")
-                self._render_dashboard(status="[bold green]✅ Retomando...[/bold green]")
+                if self.live: self.live.update(self._build_layout(status="[bold green]✅ Retomando...[/bold green]"))
             elif cmd == "/alvos":
                 if not self.alvos: self.bot.send("🌐 Modo GERAL")
                 else: self.bot.send(f"🎯 <b>ALVOS ATUAIS:</b>\n" + "\n".join(self.alvos))
@@ -226,10 +246,14 @@ class MonitorService:
             elif cmd == "/help":
                 self.bot.send("🤖 <b>COMANDOS:</b>\n/status\n/list\n/print\n/relatorio\n/add [NOME]\n/remove [NOME]\n/alvos\n/pause\n/resume")
 
+    # ==========================================================================
+    # 5. MOTOR PRINCIPAL (Loop e Scheduling)
+    # ==========================================================================
     def smart_sleep(self, minutes):
+        """Pausa a thread principal permitindo a checagem contínua do Telegram."""
         seconds = minutes * 60
         if self.paused:
-            self._render_dashboard(status="[bold yellow]⏸️ PAUSADO[/bold yellow]")
+            if self.live: self.live.update(self._build_layout(status="[bold yellow]⏸️ PAUSADO[/bold yellow]"))
             while self.paused:
                 self.handle_commands()
                 time.sleep(2)
@@ -241,86 +265,95 @@ class MonitorService:
             time.sleep(1)
 
     def run(self):
-        log.info("=== Iniciando MonitorService v2.9 ===")
-        self._clear_screen()
-        console.print("[bold green]🚀 Monitor HU (v2.9 - Ultimate Edition)[/bold green]")
-        
-        try: self.bot.send("🚀 Monitor Iniciado (v2.9)")
+        """Inicia a automação, a TUI e o ciclo infinito de monitoramento."""
+        log.info("=== Iniciando MonitorService v3.1 (Organized Edition) ===")
+        try: self.bot.send("🚀 Monitor Iniciado (v3.1)")
         except: pass
 
         try:
             self.parser = HUParser(HU_USER, HU_DATA)
             self.parser.ensure_logged()
 
-            while True:
-                if self.paused:
-                    self.smart_sleep(0)
-                    continue
+            # APENAS UM ESPAÇO EM BRANCO (Sem cls para não apagar o histórico do terminal)
+            print("\n") 
 
-                state.update_heartbeat("running")
+            with Live(self._build_layout(), console=console, screen=False, transient=True, refresh_per_second=4) as live:
+                self.live = live
 
-                try:
-                    self.parser.driver.refresh()
-                    self.vagas_atuais = self.parser.get_dropdown_options()
-                except:
-                    self.parser.ensure_logged()
-                    self.vagas_atuais = self.parser.get_dropdown_options()
-
-                # --- LÓGICA DE ESTADO ---
-                snapshot = state.load_snapshot()
-                vagas_anteriores = set(snapshot.get("especialidades", []))
-                is_first_run = snapshot.get("is_first_run", False)
-                
-                novas = self.vagas_atuais - vagas_anteriores
-                removidas = vagas_anteriores - self.vagas_atuais
-
-                if is_first_run:
-                    if self.vagas_atuais:
-                        self._add_history("system", f"Baseline criado: {len(self.vagas_atuais)} especialidades ocultas.")
-                    state.save_snapshot(list(self.vagas_atuais))
-                else:
-                    if self.alvos:
-                        novas_relevantes = {v for v in novas if any(alvo in v.upper() for alvo in self.alvos)}
-                    else:
-                        novas_relevantes = {v for v in novas if v not in self.blacklist}
-
-                    if novas_relevantes:
-                        log.info(f"VAGAS ENCONTRADAS: {novas_relevantes}")
-                        
-                        # TELEGRAM
-                        msg_tg = "🟢 <b>NOVAS VAGAS:</b>\n" + "\n".join(f"• {n}" for n in novas_relevantes)
-                        self.bot.send(msg_tg)
-                        
-                        # E-MAIL
-                        msg_email = "O Monitor HU encontrou as seguintes vagas:\n\n" + "\n".join(f"- {n}" for n in novas_relevantes)
-                        send_email("Monitor HU: Novas Vagas!", msg_email)
-
-                        # HISTÓRICO E BEEP
-                        for n in novas_relevantes:
-                            self._add_history("added", f"{n} abriu")
-                            
-                        sys.stdout.write('\a')
-                        sys.stdout.flush()
+                while True:
+                    if self.paused:
+                        self.smart_sleep(0)
+                        continue
                     
-                    for n in novas: self._log_to_csv("added", n)
-                    for r in removidas: 
-                        self._log_to_csv("removed", r)
-                        self._add_history("removed", f"{r} fechou")
+                    # ... (o resto do seu código continua normal aqui para baixo) ...
 
-                    if novas or removidas:
+                    state.update_heartbeat("running")
+
+                    try:
+                        self.parser.driver.refresh()
+                        self.vagas_atuais = self.parser.get_dropdown_options()
+                    except:
+                        self.parser.ensure_logged()
+                        self.vagas_atuais = self.parser.get_dropdown_options()
+
+                    snapshot = state.load_snapshot()
+                    vagas_anteriores = set(snapshot.get("especialidades", []))
+                    is_first_run = snapshot.get("is_first_run", False)
+                    
+                    novas = self.vagas_atuais - vagas_anteriores
+                    removidas = vagas_anteriores - self.vagas_atuais
+
+                    if is_first_run:
+                        if self.vagas_atuais:
+                            self._add_history("system", f"Baseline criado: {len(self.vagas_atuais)} especialidades.")
                         state.save_snapshot(list(self.vagas_atuais))
-                
-                minutos = scheduler.get_interval_minutes()
-                self._render_dashboard(status="[bold green]✅ Conectado[/bold green]", next_check=minutos)
-                self.smart_sleep(minutos)
+                    else:
+                        if self.alvos:
+                            novas_relevantes = {v for v in novas if any(alvo in v.upper() for alvo in self.alvos)}
+                        else:
+                            novas_relevantes = {v for v in novas if v not in self.blacklist}
+
+                        if novas_relevantes:
+                            log.info(f"VAGAS ENCONTRADAS: {novas_relevantes}")
+                            msg_tg = "🟢 <b>NOVAS VAGAS:</b>\n" + "\n".join(f"• {n}" for n in novas_relevantes)
+                            self.bot.send(msg_tg)
+                            
+                            msg_email = "O Monitor HU encontrou as seguintes vagas:\n\n" + "\n".join(f"- {n}" for n in novas_relevantes)
+                            send_email("Monitor HU: Novas Vagas!", msg_email)
+
+                            for n in novas_relevantes: self._add_history("added", f"{n} abriu")
+                                
+                            sys.stdout.write('\a')
+                            sys.stdout.flush()
+                        
+                        for n in novas: self._log_to_csv("added", n)
+                        for r in removidas: 
+                            self._log_to_csv("removed", r)
+                            self._add_history("removed", f"{r} fechou")
+
+                        if novas or removidas:
+                            state.save_snapshot(list(self.vagas_atuais))
+                    
+                    minutos = scheduler.get_interval_minutes()
+                    self.live.update(self._build_layout(status="[bold green]✅ Conectado[/bold green]", next_check=minutos))
+                    self.smart_sleep(minutos)
 
         except KeyboardInterrupt:
-            console.print("\n[bold red]Parando...[/bold red]")
+            # Força o encerramento do contexto Live para que o transient=True atue imediatamente
+            if self.live:
+                self.live.stop()
         except Exception:
             console.print_exception()
             raise
         finally:
             if self.parser: self.parser.close()
+            
+            # Limpeza Absoluta do Windows Terminal / PowerShell 7
+            sys.stdout.write("\033[2J\033[H") # Código ANSI: Apaga tudo e volta o cursor pro início
+            sys.stdout.flush()
+            os.system('cls' if os.name == 'nt' else 'clear') # Fallback do SO
+            
+            console.print("\n[bold cyan]✅ Monitor HU encerrado com sucesso. Tela limpa![/bold cyan]\n")
 
 def main():
     MonitorService().run()
