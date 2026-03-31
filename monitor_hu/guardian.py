@@ -47,8 +47,10 @@ def main():
                     print("\n🚨 Crash loop detectado. Encerrando o Guardian.")
                     break
 
-                print(f"🔴 Monitor caiu. Reiniciando em {backoff}s...")
-                send_telegram(f"🔴 Monitor caiu. Reiniciando em {backoff}s...")
+                # MODIFICAÇÃO AQUI: Informando o código do erro
+                alerta_msg = f"🔴 Monitor caiu inesperadamente (Código: {retcode}). Reiniciando em {backoff}s..."
+                print(f"{alerta_msg}")
+                send_telegram(alerta_msg)
 
                 time.sleep(backoff)
                 backoff = min(backoff * 2, MAX_BACKOFF)

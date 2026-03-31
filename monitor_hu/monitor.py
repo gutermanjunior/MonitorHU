@@ -277,7 +277,7 @@ class MonitorService:
             # APENAS UM ESPAÇO EM BRANCO (Sem cls para não apagar o histórico do terminal)
             print("\n") 
 
-            with Live(self._build_layout(), console=console, screen=False, transient=True, refresh_per_second=4) as live:
+            with Live(self._build_layout(), console=console, screen=True, transient=True, refresh_per_second=4) as live:
                 self.live = live
 
                 while True:
@@ -339,21 +339,29 @@ class MonitorService:
                     self.smart_sleep(minutos)
 
         except KeyboardInterrupt:
-            # Força o encerramento do contexto Live para que o transient=True atue imediatamente
+            # Fechamento manual limpo
             if self.live:
                 self.live.stop()
-        except Exception:
+        except Exception as e:
+            # 1. Registra o erro no log de texto ANTES de repassar para o Guardian
+            log.error(f"Erro fatal no Monitor: {e}", exc_info=True)
+            # 2. Marca no console o erro (sem apagar a tela depois)
             console.print_exception()
+            # 3. O 'raise' devolve um código de erro (!= 0) para o Guardian agir
             raise
         finally:
             if self.parser: self.parser.close()
             
-            # Limpeza Absoluta do Windows Terminal / PowerShell 7
-            sys.stdout.write("\033[2J\033[H") # Código ANSI: Apaga tudo e volta o cursor pro início
-            sys.stdout.flush()
-            os.system('cls' if os.name == 'nt' else 'clear') # Fallback do SO
-            
-            console.print("\n[bold cyan]✅ Monitor HU encerrado com sucesso. Tela limpa![/bold cyan]\n")
+            # 4. Checagem de segurança: Só limpa a tela se NÃO estivermos no meio de um erro.
+            # Se 'sys.exc_info()[0]' for None, significa que saímos do loop pacificamente.
+            if sys.exc_info()[0] is None:
+                sys.stdout.write("\033[2J\033[H") 
+                sys.stdout.flush()
+                os.system('cls' if os.name == 'nt' else 'clear') 
+                console.print("\n[bold cyan]✅ Monitor HU encerrado com sucesso. Tela limpa![/bold cyan]\n")
+            else:
+                # Se foi um erro, deixa o erro na tela para o Guardian ler e fechar.
+                pass
 
 def main():
     MonitorService().run()
