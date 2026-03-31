@@ -1,10 +1,27 @@
+"""
+===============================================================================
+Projeto: Monitor HU-USP (Especialidades)
+Arquivo: parser.py
+Autor: Guterman (guterman.com.br)
+Versão: 3.2 (Anti-Kickback & Infinite Wait Edition)
+Data: Março de 2026
+===============================================================================
+
+Descrição:
+    Módulo responsável pela interação direta com o navegador via Selenium.
+    Lida com extração de vagas, injeção de JavaScript, gestão de cookies 
+    e proteção contra quedas de sessão (kickbacks) e CAPTCHAs.
+===============================================================================
+"""
+
 import os
+import sys
 import time
 import pickle
 from pathlib import Path
 from selenium import webdriver
 from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support.ui import WebDriverWait, Select
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
@@ -41,7 +58,7 @@ class HUParser:
         options.add_argument("--window-size=1080,624") 
         
         # Como o Monitor 3 está à esquerda do principal, usamos um X negativo.
-        # -1000 vai empurrar a janela para dentro do Monitor 3.
+        # -1080 vai empurrar a janela para dentro do Monitor 3.
         options.add_argument("--window-position=-1080,0")
 
         try:
@@ -78,53 +95,71 @@ class HUParser:
         except Exception: pass
 
     def manual_login(self):
-        log.info("Iniciando login manual.")
-        wait = WebDriverWait(self.driver, 15)
-        print("Aguardando formulário...")
+        """Preenche o formulário e aguarda infinitamente pela resolução do CAPTCHA."""
+        log.warning("Sessão perdida ou inicial. Iniciando login manual.")
+        wait = WebDriverWait(self.driver, 10)
         
-        matricula = wait.until(EC.element_to_be_clickable((By.ID, "PacienteMatricula")))
-        matricula.clear()
-        matricula.send_keys(self.HU_USER)
-
-        print("Preenchendo data via injeção JavaScript...")
-        data_field = wait.until(EC.presence_of_element_located((By.ID, "PacienteDataNascimento")))
-        js_script = """
-            var el = arguments[0]; var val = arguments[1];
-            el.value = val;
-            el.dispatchEvent(new Event('input', { bubbles: true }));
-            el.dispatchEvent(new Event('change', { bubbles: true }));
-            el.dispatchEvent(new Event('blur', { bubbles: true }));
-        """
-        self.driver.execute_script(js_script, data_field, self.HU_DATA)
-
-        print("🔐 Resolva o CAPTCHA manualmente no navegador.")
         try:
-            WebDriverWait(self.driver, 300).until(EC.presence_of_element_located((By.ID, "Especialidade")))
-            print("Login detectado!")
-            self.save_cookies()
-        except Exception as e:
-            log.error("Tempo esgotado para login.")
+            # Tenta preencher a matrícula e a data se os campos estiverem visíveis
+            matricula = wait.until(EC.element_to_be_clickable((By.ID, "PacienteMatricula")))
+            matricula.clear()
+            matricula.send_keys(self.HU_USER)
+
+            data_field = wait.until(EC.presence_of_element_located((By.ID, "PacienteDataNascimento")))
+            js_script = """
+                var el = arguments[0]; var val = arguments[1];
+                el.value = val;
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+                el.dispatchEvent(new Event('blur', { bubbles: true }));
+            """
+            self.driver.execute_script(js_script, data_field, self.HU_DATA)
+        except Exception:
+            log.info("Campos de login não detectados. Assumindo que a página já está preenchida ou em outro estágio.")
+
+        # Emite um aviso sonoro no Windows para chamar sua atenção
+        sys.stdout.write('\a')
+        sys.stdout.flush()
+        
+        # LOOP INFINITO: O cão de guarda da sessão
+        log.warning("Aguardando intervenção humana no CAPTCHA...")
+        while True:
+            try:
+                # Ele checa a cada 3 segundos se o menu 'Especialidade' finalmente carregou na tela
+                WebDriverWait(self.driver, 3).until(EC.presence_of_element_located((By.ID, "Especialidade")))
+                log.info("Login/CAPTCHA detectado e resolvido com sucesso!")
+                self.save_cookies()
+                break # Sai do loop infinito e devolve o controle ao programa principal
+            except Exception:
+                # Se não carregou, ele simplesmente não faz nada e tenta de novo. Sem gerar erros.
+                time.sleep(1)
 
     def ensure_logged(self):
         self.open()
         if self.load_cookies():
             try:
+                # Se após carregar o cookie o menu de Especialidade aparecer rápido, a sessão está viva.
                 WebDriverWait(self.driver, 5).until(EC.presence_of_element_located((By.ID, "Especialidade")))
-                log.info("Sessão restaurada com sucesso.")
+                log.info("Sessão restaurada com sucesso via cookies.")
                 return
-            except: pass
-        print("Necessário login manual.")
+            except Exception: pass
+            
+        # Se os cookies falharam ou não existem, entramos no modo de login blindado
+        log.warning("Necessário login manual ou resolução de Kickback.")
         self.manual_login()
 
     def get_dropdown_options(self):
-        try:
-            wait = WebDriverWait(self.driver, 10)
-            select_elem = wait.until(EC.presence_of_element_located((By.ID, "Especialidade")))
-            options = select_elem.find_elements(By.TAG_NAME, "option")
-            results = {opt.text.strip() for opt in options if opt.text.strip() not in {"Selecione a Especialidade...", "", "Selecione..."}}
-            return results
-        except Exception:
-            return set()
+        # Se o site der erro do servidor, esse By.ID vai falhar e gerar a exceção 
+        # que o monitor.py vai capturar como "Site Indisponível"
+        select_element = Select(self.driver.find_element(By.ID, "Especialidade"))
+        
+        opcoes = set()
+        for option in select_element.options:
+            texto = option.text.strip().upper()
+            if "SELECIONE" not in texto:
+                opcoes.add(texto)
+        
+        return opcoes
 
     def take_screenshot(self, filename="screenshot.png"):
         try:

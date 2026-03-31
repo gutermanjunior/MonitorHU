@@ -67,7 +67,7 @@ def main():
         if monitor and monitor.poll() is None:
             try:
                 # Dá 3 segundos para a TUI encolher e sumir em paz
-                monitor.wait(timeout=3)
+                monitor.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 monitor.terminate()
         

@@ -270,6 +270,8 @@ class MonitorService:
         try: self.bot.send("🚀 Monitor Iniciado (v3.1)")
         except: pass
 
+        erro_critico = False # <--- 1. NOVA FLAG DE CONTROLE
+
         try:
             self.parser = HUParser(HU_USER, HU_DATA)
             self.parser.ensure_logged()
@@ -285,16 +287,25 @@ class MonitorService:
                         self.smart_sleep(0)
                         continue
                     
-                    # ... (o resto do seu código continua normal aqui para baixo) ...
-
                     state.update_heartbeat("running")
 
                     try:
                         self.parser.driver.refresh()
                         self.vagas_atuais = self.parser.get_dropdown_options()
-                    except:
-                        self.parser.ensure_logged()
-                        self.vagas_atuais = self.parser.get_dropdown_options()
+                    except Exception:
+                        try:
+                            self.parser.ensure_logged()
+                            self.vagas_atuais = self.parser.get_dropdown_options()
+                        except Exception as e:
+                            # --- BLOCO DE PROTEÇÃO CONTRA SITE FORA DO AR ---
+                            log.warning(f"Falha ao validar a lista de vagas. Site caiu? Erro: {e}")
+                            self._add_history("system", "⚠️ Site indisponível. Mantendo cache.")
+                            
+                            minutos = scheduler.get_interval_minutes()
+                            self.live.update(self._build_layout(status="[bold red]⚠️ Erro no Site HU - Aguardando...[/bold red]", next_check=minutos))
+                            self.smart_sleep(minutos)
+                            continue # O 'continue' pula direto para o próximo ciclo do while, sem apagar o snapshot
+                            # ------------------------------------------------
 
                     snapshot = state.load_snapshot()
                     vagas_anteriores = set(snapshot.get("especialidades", []))
@@ -339,29 +350,28 @@ class MonitorService:
                     self.smart_sleep(minutos)
 
         except KeyboardInterrupt:
-            # Fechamento manual limpo
+            # Fechamento manual limpo via Ctrl+C
             if self.live:
                 self.live.stop()
         except Exception as e:
-            # 1. Registra o erro no log de texto ANTES de repassar para o Guardian
+            erro_critico = True # <--- 2. MARCA QUE HOUVE ERRO
             log.error(f"Erro fatal no Monitor: {e}", exc_info=True)
-            # 2. Marca no console o erro (sem apagar a tela depois)
             console.print_exception()
-            # 3. O 'raise' devolve um código de erro (!= 0) para o Guardian agir
             raise
         finally:
-            if self.parser: self.parser.close()
-            
-            # 4. Checagem de segurança: Só limpa a tela se NÃO estivermos no meio de um erro.
-            # Se 'sys.exc_info()[0]' for None, significa que saímos do loop pacificamente.
-            if sys.exc_info()[0] is None:
-                sys.stdout.write("\033[2J\033[H") 
+            # 3. LIMPEZA DA TELA VEM PRIMEIRO! (É rápido e garantido)
+            if not erro_critico:
+                # Código ANSI agressivo: Força a saída do buffer alternativo e limpa tudo
+                sys.stdout.write("\033[?1049l\033[2J\033[H") 
                 sys.stdout.flush()
                 os.system('cls' if os.name == 'nt' else 'clear') 
-                console.print("\n[bold cyan]✅ Monitor HU encerrado com sucesso. Tela limpa![/bold cyan]\n")
-            else:
-                # Se foi um erro, deixa o erro na tela para o Guardian ler e fechar.
-                pass
+            
+            # 4. FECHAMENTO DO SELENIUM DEPOIS (É demorado)
+            if self.parser: 
+                try:
+                    self.parser.close()
+                except:
+                    pass
 
 def main():
     MonitorService().run()
