@@ -225,3 +225,5 @@ pip-delete-this-directory.txt
 
 # Local Project Files
 old/
+*.sublime-workspace
+*.sublime-project
